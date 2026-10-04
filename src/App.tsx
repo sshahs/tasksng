@@ -14,7 +14,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useHotkeys } from "@/hooks/use-hotkeys";
 import { useTheme } from "@/hooks/use-theme";
-import { windowReady } from "@/lib/api";
+import { api, windowReady } from "@/lib/api";
 import { getPref } from "@/lib/prefs";
 import { SMART_VIEWS, useStore, type ViewId } from "@/lib/store";
 import { useUpdates } from "@/lib/updater";
@@ -129,6 +129,7 @@ export default function App() {
     { keys: "mod+h", inInputs: true, handler: () => s().set({ showCompleted: !s().showCompleted }) },
     { keys: "mod+b", inInputs: true, handler: () => s().set({ sidebarOpen: !s().sidebarOpen }) },
     { keys: "mod+,", inInputs: true, handler: () => s().set({ settingsOpen: true }) },
+    { keys: "mod+q", inInputs: true, handler: () => void api.quitApp() },
     ...Array.from({ length: 9 }, (_, i) => ({ keys: `mod+${i + 1}`, inInputs: true, handler: () => goTo(i) })),
   ]);
 

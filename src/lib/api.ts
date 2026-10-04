@@ -82,6 +82,7 @@ export const api = {
     call<void>("reminder_action", { uid, action, minutes }),
   testNotification: () => call<void>("test_notification"),
   hideQuickAdd: () => call<void>("hide_quick_add"),
+  quitApp: () => call<void>("quit_app"),
 };
 
 /**

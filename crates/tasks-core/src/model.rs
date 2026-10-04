@@ -9,7 +9,7 @@ use crate::ical::{self, Component, Property};
 use crate::recur::{self, Advance};
 use crate::reminders::{self, Reminder};
 
-pub const PRODID: &str = "-//TasksNG//TasksNG for Windows//EN";
+pub const PRODID: &str = "-//TasksNG//TasksNG//EN";
 
 /// Marks a task that repeats relative to its completion. RFC 5545 has no way
 /// to say this, so it lives next to the RRULE; the UI sees it as a

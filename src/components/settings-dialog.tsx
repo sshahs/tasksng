@@ -22,9 +22,11 @@ import { Switch } from "@/components/ui/switch";
 import { useTheme, type Theme } from "@/hooks/use-theme";
 import { api, appVersion, isTauri } from "@/lib/api";
 import { relativeTime } from "@/lib/dates";
+import { isWindows, superKey } from "@/lib/platform";
 import { getPref, setPref } from "@/lib/prefs";
 import { DEFAULT_REMINDERS } from "@/lib/reminders";
 import { useStore } from "@/lib/store";
+import type { SettingsView } from "@/lib/types";
 import { useUpdates } from "@/lib/updater";
 import { cn } from "@/lib/utils";
 import { ConnectForm } from "./connect-form";
@@ -40,7 +42,7 @@ export const SYNC_INTERVALS = [
 
 export const SHORTCUTS: [string, string][] = [
   ["N", "New task"],
-  ["Win Alt N", "Quick add anywhere"],
+  [`${superKey} Alt N`, "Quick add anywhere"],
   ["Ctrl K", "Command palette / jump to task"],
   ["Ctrl F", "Search"],
   ["↑ ↓", "Move selection"],
@@ -54,6 +56,7 @@ export const SHORTCUTS: [string, string][] = [
   ["Del", "Delete"],
   ["Ctrl Z", "Undo delete"],
   ["Ctrl H", "Show / hide completed"],
+  ["Ctrl Q", "Quit TasksNG"],
   ["Ctrl 1…9", "Switch list"],
   ["Ctrl B", "Toggle sidebar"],
   ["F5", "Sync now"],
@@ -282,7 +285,7 @@ function BackgroundSection() {
       <SettingRow
         id="reminders"
         label="Show reminders"
-        hint={settings.nativeNotifications ? "As Windows notifications with Snooze and Done buttons." : "Inside the app (Windows notifications need the desktop app on Windows)."}
+        hint={reminderHint(settings)}
         checked={settings.reminders}
         onChange={(reminders) => save({ reminders })}
       />
@@ -323,17 +326,23 @@ function BackgroundSection() {
       )}
       <SettingRow
         id="close-to-tray"
-        label="Keep running in the notification area when closed"
-        hint="Reminders and quick add keep working. Quit from the TasksNG icon next to the clock."
+        label={isWindows ? "Keep running in the notification area when closed" : "Keep running in the background when closed"}
+        hint={
+          isWindows
+            ? "Reminders and quick add keep working. Quit from the TasksNG icon next to the clock."
+            : settings.platform?.tray
+              ? "Reminders and quick add keep working. Quit from the TasksNG tray icon."
+              : "Reminders and quick add keep working. Open TasksNG again from your app launcher; quit with Ctrl+Q."
+        }
         checked={settings.closeToTray}
         onChange={(closeToTray) => save({ closeToTray })}
       />
       <SettingRow
         id="autostart"
-        label="Start TasksNG when you sign in to Windows"
-        hint="Starts quietly in the notification area."
+        label={isWindows ? "Start TasksNG when you sign in to Windows" : "Start TasksNG when you log in"}
+        hint={settings.platform?.autostartError ?? (isWindows ? "Starts quietly in the notification area." : "Starts quietly in the background.")}
         checked={settings.launchAtLogin}
-        disabled={!isTauri}
+        disabled={!isTauri || (!!settings.platform?.autostartError && !settings.launchAtLogin)}
         onChange={(launchAtLogin) => save({ launchAtLogin })}
       />
       <div className="grid gap-2">
@@ -350,20 +359,56 @@ function BackgroundSection() {
           </div>
         )}
         {settings.shortcutError && <p className="text-destructive pl-12 text-xs">{settings.shortcutError}</p>}
+        {settings.platform?.wayland && settings.quickAddShortcut !== null && (
+          <div className="flex items-center gap-2 pl-12">
+            <code className="bg-muted rounded px-1.5 py-0.5 text-xs">tasksng --quick-add</code>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void navigator.clipboard.writeText("tasksng --quick-add").then(() => toast.success("Copied"))}
+            >
+              Copy command
+            </Button>
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
+function updatesHint(installKind: string | undefined): string {
+  switch (installKind) {
+    case "nix":
+      return "This copy is managed by Nix: update it with nixos-rebuild, home-manager or nix profile upgrade.";
+    case "appimage":
+    case "system":
+      return "Update it the way you installed it, e.g. with your package manager.";
+    default:
+      return "Automatic updates are available when TasksNG is installed with the setup program; the portable version is updated by downloading a new copy.";
+  }
+}
+
+function reminderHint(settings: SettingsView): string {
+  if (!settings.nativeNotifications) {
+    return isWindows
+      ? "Inside the app (Windows notifications need the desktop app on Windows)."
+      : "Inside the app (no notification service is running).";
+  }
+  if (isWindows) return "As Windows notifications with Snooze and Done buttons.";
+  return settings.platform?.notificationActions
+    ? "As desktop notifications with Snooze and Done buttons."
+    : "As desktop notifications.";
+}
+
 function UpdatesSection({ version }: { version: string }) {
   const { phase, version: next, progress, error, lastChecked, autoCheck, supported } = useUpdates();
+  const installKind = useStore((s) => s.settings?.platform?.installKind);
   if (!supported) {
     return (
       <section className="grid gap-1">
         <h3 className="text-sm font-medium">Updates</h3>
         <p className="text-muted-foreground text-xs">
-          You have version {version || "…"}. Automatic updates are available when TasksNG is installed with the setup
-          program; the portable version is updated by downloading a new copy.
+          You have version {version || "…"}. {updatesHint(installKind)}
         </p>
       </section>
     );

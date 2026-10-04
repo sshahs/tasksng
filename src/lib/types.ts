@@ -138,7 +138,22 @@ export type SettingsPatch = Partial<Omit<Settings, "trayHintShown">> & { launchA
 export interface SettingsView extends Settings {
   launchAtLogin: boolean;
   shortcutError: string | null;
+  /** Reminders appear as system notifications (otherwise inside the app). */
   nativeNotifications: boolean;
+  platform?: Platform;
+}
+
+/** What the system supports, for the right wording in Settings. */
+export interface Platform {
+  os: "windows" | "linux" | "macos" | (string & {});
+  /** How TasksNG was installed, which decides how it is updated. */
+  installKind: "windows" | "nix" | "appimage" | "system";
+  /** Global shortcuts can't be registered (Wayland): bind `tasksng --quick-add` instead. */
+  wayland: boolean;
+  /** A tray icon is visible somewhere. */
+  tray: boolean;
+  notificationActions: boolean;
+  autostartError: string | null;
 }
 
 export interface DueReminder {

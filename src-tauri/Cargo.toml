@@ -20,7 +20,6 @@ tauri-plugin-window-state = "2"
 tauri-plugin-log = "2"
 tauri-plugin-process = "2"
 tauri-plugin-global-shortcut = "2"
-tauri-plugin-autostart = "2"
 tauri-plugin-opener = "2"
 # native-tls: reuse Windows' SChannel and certificate store like the sync client.
 tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "system-proxy"] }
@@ -30,6 +29,20 @@ tokio.workspace = true
 log.workspace = true
 reqwest = { version = "0.13", default-features = false }
 chrono.workspace = true
+
+# Start at login: the plugin's registry entry on Windows. On Linux TasksNG
+# writes its own XDG autostart entry (src/autostart.rs) so Nix store paths
+# don't end up in it.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tauri-plugin-autostart = "2"
+
+# Linux desktop integration: passwords in the Secret Service (GNOME Keyring,
+# KWallet, KeePassXC), freedesktop notifications with buttons, and checking
+# for the tray library before tray-icon tries (and aborts) to load it.
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3.6", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
+zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
+libloading = "0.7"
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["windows-native"] }

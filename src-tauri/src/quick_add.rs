@@ -45,6 +45,10 @@ pub fn prepare(app: &AppHandle) {
 
 /// Centres the window near the top of the screen the mouse is on.
 fn place(app: &AppHandle, window: &WebviewWindow) {
+    // Wayland compositors place windows themselves (and report no cursor).
+    if crate::desktop::wayland_session() {
+        return;
+    }
     let monitor = app
         .cursor_position()
         .ok()

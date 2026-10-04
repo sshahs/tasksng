@@ -4,13 +4,14 @@ import { RotateCcwIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { api, isTauri } from "@/lib/api";
+import { superKey } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 
 export const DEFAULT_SHORTCUT = "Super+Alt+N";
 
-/** "Super+Alt+N" → ["Win", "Alt", "N"] */
+/** "Super+Alt+N" → ["Win", "Alt", "N"] (["Super", …] off Windows) */
 export function shortcutKeys(s: string): string[] {
-  return s.split("+").map((k) => (k === "Super" ? "Win" : k === "Control" ? "Ctrl" : k));
+  return s.split("+").map((k) => (k === "Super" ? superKey : k === "Control" ? "Ctrl" : k));
 }
 
 /** The accelerator for a key press, or null while only modifiers are held. */
@@ -88,7 +89,7 @@ export function ShortcutRecorder({
         )}
       </button>
       {value !== DEFAULT_SHORTCUT && !disabled && (
-        <Button variant="ghost" size="icon-sm" onClick={() => onChange(DEFAULT_SHORTCUT)} aria-label="Reset to Win+Alt+N" title="Reset to Win+Alt+N">
+        <Button variant="ghost" size="icon-sm" onClick={() => onChange(DEFAULT_SHORTCUT)} aria-label={`Reset to ${superKey}+Alt+N`} title={`Reset to ${superKey}+Alt+N`}>
           <RotateCcwIcon />
         </Button>
       )}

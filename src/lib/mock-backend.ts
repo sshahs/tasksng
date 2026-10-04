@@ -260,9 +260,10 @@ export function createMockBackend() {
     },
     reminder_action: () => null,
     test_notification: () => {
-      throw "Windows notifications are only available in the desktop app";
+      throw "Notifications are only available in the desktop app";
     },
     hide_quick_add: () => null,
+    quit_app: () => null,
     window_ready: () => null,
     delete_list: async (a) => {
       await sleep(200);

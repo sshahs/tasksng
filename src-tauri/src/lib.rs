@@ -1,6 +1,9 @@
 //! Tauri shell: exposes the task store to the UI and runs synchronisation in
 //! the background so every UI action completes instantly.
 
+mod autostart;
+mod cli;
+mod desktop;
 mod notify;
 mod quick_add;
 mod secrets;
@@ -23,7 +26,6 @@ use tasks_core::store::{write_atomic, Account, Snapshot, Store, TaskList};
 use tasks_core::sync::{self, SyncReport};
 use tasks_core::Error;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
-use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 
@@ -55,8 +57,13 @@ pub(crate) struct AppState {
     settings: Mutex<Settings>,
     shortcut_error: Mutex<Option<String>>,
     alarms: Alarms,
-    /// Started with Windows (`--hidden`): stay in the notification area.
+    /// Started at login (`--hidden`) or for quick add: keep the main window hidden.
     start_hidden: bool,
+    /// Becomes true once the saved password has been read (the keyring can
+    /// take a while, e.g. while it asks to be unlocked).
+    creds_loaded: tokio::sync::watch::Sender<bool>,
+    creds_retry: Mutex<Option<std::time::Instant>>,
+    tray_created: bool,
     pub(crate) quick_add_pending: AtomicBool,
     pub(crate) quick_add_loaded: AtomicBool,
     pub(crate) quick_add_creating: AtomicBool,
@@ -170,6 +177,18 @@ fn after_local_change(app: &AppHandle) {
 }
 
 pub(crate) async fn run_sync(app: &AppHandle, state: &AppState) -> Result<Vec<String>, Error> {
+    let mut loaded = state.creds_loaded.subscribe();
+    let _ = tokio::time::timeout(Duration::from_secs(120), loaded.wait_for(|l| *l)).await;
+    if state.connection().is_none() && state.store().account().is_some() && retry_credentials(state) {
+        // E.g. the keyring was locked at start-up and has been unlocked since.
+        let handle = app.clone();
+        if let Ok((s, msg)) = tauri::async_runtime::spawn_blocking(move || connect_saved(&handle.state::<AppState>())).await {
+            if s != "idle" {
+                set_status(app, s, msg.clone());
+                return Err(Error::Other(msg.unwrap_or_else(|| "Please sign in again".into())));
+            }
+        }
+    }
     let Some(conn) = state.connection() else {
         let signed_in = state.store().account().is_some();
         let (s, msg) = if signed_in {
@@ -237,14 +256,19 @@ async fn connect(app: AppHandle, state: State<'_, AppState>, args: ConnectArgs) 
         client
     };
 
-    secrets::save(&state.data_dir, &discovery.home_url, &username, &args.password)?;
-    {
+    let stored = {
+        let (dir, home_url, user, password) =
+            (state.data_dir.clone(), discovery.home_url.clone(), username.clone(), args.password.clone());
+        tauri::async_runtime::spawn_blocking(move || secrets::save(&dir, &home_url, &user, &password))
+            .await
+            .map_err(|e| e.to_string())??
+    };
+    let replaced = {
         let mut store = state.store();
-        if let Some(old) = store.account() {
-            if old.home_url != discovery.home_url || old.username != username {
-                secrets::delete(&state.data_dir, &old.home_url, &old.username);
-            }
-        }
+        let replaced = store
+            .account()
+            .filter(|old| old.home_url != discovery.home_url || old.username != username)
+            .map(|old| (old.home_url.clone(), old.username.clone()));
         store.set_account(Account {
             server_url: args.server_url.trim().to_string(),
             username,
@@ -252,12 +276,25 @@ async fn connect(app: AppHandle, state: State<'_, AppState>, args: ConnectArgs) 
             home_url: discovery.home_url,
             accept_invalid_certs: args.accept_invalid_certs,
         });
+        replaced
+    };
+    if let Some((home_url, user)) = replaced {
+        let dir = state.data_dir.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || secrets::delete(&dir, &home_url, &user)).await;
     }
     state.set_connection(Some(Connection { client, home }));
-    let (notices, error) = match run_sync(&app, &state).await {
+    state.creds_loaded.send_replace(true);
+    let (mut notices, error) = match run_sync(&app, &state).await {
         Ok(n) => (n, None),
         Err(e) => (Vec::new(), Some(e.to_string())),
     };
+    if stored == secrets::Stored::File {
+        notices.push(
+            "No keyring (Secret Service) was found, so your password is kept in a file only you can read. \
+             It moves into the keyring once one is running."
+                .into(),
+        );
+    }
     Ok(SyncOutcome { snapshot: state.store().snapshot(), notices, error })
 }
 
@@ -265,12 +302,15 @@ async fn connect(app: AppHandle, state: State<'_, AppState>, args: ConnectArgs) 
 async fn sign_out(app: AppHandle, state: State<'_, AppState>) -> Result<Snapshot, String> {
     let _guard = state.sync_lock.lock().await;
     state.set_connection(None);
-    {
+    let account = {
         let mut store = state.store();
-        if let Some(a) = store.account() {
-            secrets::delete(&state.data_dir, &a.home_url, &a.username);
-        }
+        let account = store.account().map(|a| (a.home_url.clone(), a.username.clone()));
         store.sign_out();
+        account
+    };
+    if let Some((home_url, username)) = account {
+        let dir = state.data_dir.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || secrets::delete(&dir, &home_url, &username)).await;
     }
     set_status(&app, "signed-out", None);
     schedule_save(&app);
@@ -468,7 +508,8 @@ async fn prepare_for_update(state: State<'_, AppState>) -> Result<(), String> {
 
 /// Whether this copy can update itself: true for the NSIS (per-user) and MSI
 /// installs, false for the portable exe, which would otherwise run the
-/// installer and end up as a second, installed copy.
+/// installer and end up as a second, installed copy. Linux copies are
+/// updated by their package manager (Nix, …).
 #[tauri::command]
 fn updates_supported() -> bool {
     #[cfg(windows)]
@@ -485,7 +526,7 @@ fn updates_supported() -> bool {
     }
     #[cfg(not(windows))]
     {
-        true
+        false
     }
 }
 
@@ -515,20 +556,55 @@ struct SettingsView {
     settings: Settings,
     launch_at_login: bool,
     shortcut_error: Option<String>,
-    /// Reminders appear as Windows notifications (false in development
-    /// builds on other systems, where they show inside the app).
+    /// Reminders appear as system notifications (otherwise inside the app).
     native_notifications: bool,
+    platform: Platform,
 }
 
+/// What the system TasksNG runs on supports, so Settings can say the right
+/// thing.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Platform {
+    /// `windows`, `linux`, `macos`
+    os: &'static str,
+    /// `windows`, `nix`, `appimage` or `system`
+    install_kind: &'static str,
+    /// Global shortcuts can't be registered (Wayland).
+    wayland: bool,
+    /// A tray icon is shown somewhere.
+    tray: bool,
+    /// Notifications can have Snooze and Done buttons.
+    notification_actions: bool,
+    /// Why "start at login" can't be turned on, if it can't.
+    autostart_error: Option<String>,
+}
+
+/// Talks to D-Bus on Linux: call it off the main thread.
 fn settings_view(app: &AppHandle) -> SettingsView {
     let state = app.state::<AppState>();
     let shortcut_error = state.shortcut_error.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    let (notifications, notification_actions) = notify::capabilities();
     SettingsView {
         settings: state.settings(),
-        launch_at_login: app.autolaunch().is_enabled().unwrap_or(false),
+        launch_at_login: autostart::is_enabled(app),
         shortcut_error,
-        native_notifications: cfg!(windows),
+        native_notifications: notifications,
+        platform: Platform {
+            os: std::env::consts::OS,
+            install_kind: desktop::install_kind(),
+            wayland: desktop::wayland_session(),
+            tray: tray_visible(&state),
+            notification_actions,
+            autostart_error: autostart::unavailable_reason(),
+        },
     }
+}
+
+/// Whether the tray icon can actually be seen (GNOME has no tray without an
+/// extension). Panels can start after TasksNG, so this is checked each time.
+fn tray_visible(state: &AppState) -> bool {
+    state.tray_created && desktop::tray_host_present()
 }
 
 /// Registers the quick add shortcut; returns a message if that failed.
@@ -536,24 +612,37 @@ fn apply_shortcut(app: &AppHandle, shortcut: Option<&str>) -> Option<String> {
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
     let shortcut = shortcut.map(str::trim).filter(|s| !s.is_empty())?;
+    if desktop::wayland_session() {
+        // Registering "works" but the keys never arrive.
+        return Some(
+            "Apps can't set global shortcuts on Wayland. Add a keyboard shortcut in your desktop's settings that runs: tasksng --quick-add"
+                .into(),
+        );
+    }
     match gs.register(shortcut) {
         Ok(()) => None,
         Err(e) => {
             log::warn!("registering {shortcut} failed: {e}");
-            Some(format!(
-                "{} is already used by Windows or another app. Pick a different shortcut.",
-                shortcut.replace("Super", "Win")
-            ))
+            Some(if cfg!(windows) {
+                format!("{} is already used by Windows or another app. Pick a different shortcut.", shortcut.replace("Super", "Win"))
+            } else {
+                format!("{shortcut} is already used by your desktop or another app. Pick a different shortcut.")
+            })
         }
     }
 }
 
-#[tauri::command]
+/// Whether the quick add shortcut is set up and working.
+fn shortcut_active(state: &AppState) -> bool {
+    state.settings().quick_add_shortcut.is_some() && state.shortcut_error.lock().unwrap_or_else(|p| p.into_inner()).is_none()
+}
+
+#[tauri::command(async)]
 fn get_settings(app: AppHandle) -> SettingsView {
     settings_view(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn update_settings(app: AppHandle, state: State<'_, AppState>, patch: SettingsPatch) -> Result<SettingsView, String> {
     let (old, new) = {
         let mut current = state.settings.lock().unwrap_or_else(|p| p.into_inner());
@@ -565,7 +654,7 @@ fn update_settings(app: AppHandle, state: State<'_, AppState>, patch: SettingsPa
     if old.quick_add_shortcut != new.quick_add_shortcut {
         let error = apply_shortcut(&app, new.quick_add_shortcut.as_deref());
         *state.shortcut_error.lock().unwrap_or_else(|p| p.into_inner()) = error;
-        if new.quick_add_shortcut.is_some() {
+        if shortcut_active(&state) {
             quick_add::prepare(&app);
         }
     }
@@ -573,11 +662,7 @@ fn update_settings(app: AppHandle, state: State<'_, AppState>, patch: SettingsPa
         state.alarms.restart();
     }
     if let Some(launch) = patch.launch_at_login {
-        let autolaunch = app.autolaunch();
-        if autolaunch.is_enabled().unwrap_or(false) != launch {
-            let res = if launch { autolaunch.enable() } else { autolaunch.disable() };
-            res.map_err(|e| format!("Couldn't change the start-up setting: {e}"))?;
-        }
+        autostart::set_enabled(&app, launch).map_err(|e| format!("Couldn't change the start-up setting: {e}"))?;
     }
     Ok(settings_view(&app))
 }
@@ -667,20 +752,44 @@ fn show_reminders(app: &AppHandle, due: Vec<DueReminder>) {
             })
             .collect()
     };
-    let handle = app.clone();
-    let res = app.run_on_main_thread(move || {
-        let id = app_id(&handle);
-        let failed = toasts.iter().any(|t| {
-            notify::show(&id, t, toast_handler(&handle))
-                .inspect_err(|e| log::info!("notification not shown: {e}"))
-                .is_err()
-        });
-        if failed {
-            let _ = handle.emit_to("main", "reminders", &due);
+    let summary = toasts.len() == 1 && due.len() > 1;
+    show_toasts(app, toasts, move |handle, failed| {
+        if failed.is_empty() {
+            return;
         }
+        // Shown inside the app instead: only the ones that failed.
+        let missed: Vec<&DueReminder> = if summary {
+            due.iter().collect()
+        } else {
+            due.iter().filter(|d| failed.iter().any(|t| t.reminder_uid.as_deref() == Some(d.uid.as_str()))).collect()
+        };
+        show_main_window(handle);
+        let _ = handle.emit_to("main", "reminders", &missed);
     });
-    if let Err(e) = res {
-        log::warn!("showing reminders failed: {e}");
+}
+
+/// Shows notifications and reports the ones that couldn't be shown. Windows
+/// wants that on the main thread; on Linux it's blocking D-Bus calls.
+fn show_toasts(app: &AppHandle, toasts: Vec<Toast>, done: impl FnOnce(&AppHandle, Vec<Toast>) + Send + 'static) {
+    let handle = app.clone();
+    let work = move || {
+        let id = app_id(&handle);
+        let failed: Vec<Toast> = toasts
+            .into_iter()
+            .filter(|t| {
+                notify::show(&id, t, toast_handler(&handle))
+                    .inspect_err(|e| log::info!("notification not shown: {e}"))
+                    .is_err()
+            })
+            .collect();
+        done(&handle, failed);
+    };
+    if cfg!(windows) {
+        if let Err(e) = app.run_on_main_thread(work) {
+            log::warn!("showing notifications failed: {e}");
+        }
+    } else {
+        std::thread::spawn(work);
     }
 }
 
@@ -712,14 +821,26 @@ fn reminder_action(app: AppHandle, uid: String, action: String, minutes: Option<
 
 /// Shows a sample reminder so people can check notifications are allowed.
 #[tauri::command]
-fn test_notification(app: AppHandle) -> Result<(), String> {
+async fn test_notification(app: AppHandle) -> Result<(), String> {
     let toast = Toast {
         title: "This is how reminders look".into(),
         body: "Snooze or complete tasks right from the notification.".into(),
         reminder_uid: Some(String::new()),
         open_uid: None,
     };
-    notify::show(&app_id(&app), &toast, toast_handler(&app))
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    show_toasts(&app, vec![toast], move |_, failed| {
+        let _ = tx.send(failed.is_empty());
+    });
+    match rx.await {
+        Ok(true) => Ok(()),
+        _ => Err("No notification service answered. Is a notification daemon running?".into()),
+    }
+}
+
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -750,14 +871,21 @@ fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
                 settings.tray_hint_shown = true;
                 settings::save(&state.settings_path, &settings);
                 *state.settings.lock().unwrap_or_else(|p| p.into_inner()) = settings;
-                let toast = Toast {
-                    title: "TasksNG is still running".into(),
-                    body: "It stays in the notification area so reminders can appear. Right-click its icon to quit, or change this in Settings."
-                        .into(),
-                    reminder_uid: None,
-                    open_uid: None,
+                let tray = cfg!(windows) || tray_visible(&state);
+                let body = if cfg!(windows) {
+                    "It stays in the notification area so reminders can appear. Right-click its icon to quit, or change this in Settings."
+                } else if tray {
+                    "It keeps running so reminders can appear. Quit from its tray icon, or change this in Settings."
+                } else {
+                    "It keeps running so reminders can appear. Open it again from your app launcher and quit with Ctrl+Q, or change this in Settings."
                 };
-                let _ = notify::show(&app_id(app), &toast, toast_handler(app));
+                let toast = Toast { title: "TasksNG is still running".into(), body: body.into(), reminder_uid: None, open_uid: None };
+                show_toasts(app, vec![toast], |handle, failed| {
+                    // Nothing could tell people where it went: bring it back.
+                    if !failed.is_empty() && !cfg!(windows) {
+                        show_main_window(handle);
+                    }
+                });
             }
         }
         (quick_add::LABEL, WindowEvent::Focused(false)) => quick_add::hide(app),
@@ -769,13 +897,113 @@ fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
     }
 }
 
+/// Acts on flags given to this process or forwarded from a second launch.
+fn handle_cli(app: &AppHandle, cli: &cli::Cli, first_launch: bool) {
+    if cli.quit {
+        app.exit(0);
+        return;
+    }
+    if cli.quick_add {
+        quick_add::show(app);
+    }
+    if cli.show || (!first_launch && !cli.hidden && !cli.quick_add && !cli.sync) {
+        show_main_window(app);
+    }
+    if cli.sync {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let state = app.state::<AppState>();
+            let _ = run_sync(&app, &state).await;
+        });
+    }
+}
+
+/// Reads the saved password and connects. The keyring may block (D-Bus, an
+/// unlock prompt): call it off the main thread. Returns the status to show.
+fn connect_saved(state: &AppState) -> (&'static str, Option<String>) {
+    let Some(account) = state.store().account().cloned() else { return ("signed-out", None) };
+    let password = match secrets::load(&state.data_dir, &account.home_url, &account.username) {
+        Ok(p) => p,
+        Err(locked) => return ("auth-required", Some(locked)),
+    };
+    match (password, Url::parse(&account.home_url)) {
+        (Some(password), Ok(home)) => {
+            let creds = Credentials { username: account.username.clone(), password };
+            match DavClient::new(&home, creds, account.accept_invalid_certs) {
+                Ok(client) => {
+                    // Signed in again meanwhile: keep that connection.
+                    if state.connection().is_none() {
+                        state.set_connection(Some(Connection { client, home }));
+                    }
+                    ("idle", None)
+                }
+                Err(e) => ("error", Some(e.to_string())),
+            }
+        }
+        _ => ("auth-required", Some("Please sign in again".to_string())),
+    }
+}
+
+/// Whether to read the keyring again (at most every few minutes: a locked
+/// keyring asks to be unlocked each time).
+fn retry_credentials(state: &AppState) -> bool {
+    let mut last = state.creds_retry.lock().unwrap_or_else(|p| p.into_inner());
+    if last.is_some_and(|t| t.elapsed() < Duration::from_secs(300)) {
+        return false;
+    }
+    *last = Some(std::time::Instant::now());
+    true
+}
+
+fn load_credentials(app: AppHandle) {
+    std::thread::spawn(move || {
+        let state = app.state::<AppState>();
+        let (status, message) = connect_saved(&state);
+        if state.connection().is_none() || status != "idle" {
+            set_status(&app, status, message);
+        }
+        state.creds_loaded.send_replace(true);
+    });
+}
+
+fn log_environment(state: &AppState) {
+    let var = |k: &str| std::env::var(k).unwrap_or_default();
+    let (notifications, actions) = notify::capabilities();
+    log::info!(
+        "TasksNG on {} ({}): session {:?}, desktop {:?}, tray {}, notifications {} (buttons {})",
+        std::env::consts::OS,
+        desktop::install_kind(),
+        var("XDG_SESSION_TYPE"),
+        var("XDG_CURRENT_DESKTOP"),
+        tray_visible(state),
+        notifications,
+        actions,
+    );
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let context = tauri::generate_context!();
+    // Before anything touches the display, D-Bus or $HOME.
+    let cli = match cli::Cli::from_env() {
+        Ok(cli) => cli,
+        Err(cli::Early::Version) => {
+            println!("TasksNG {}", context.package_info().version);
+            return;
+        }
+        Err(cli::Early::Help) => {
+            print!("{}", cli::HELP);
+            return;
+        }
+    };
+    let first_cli = cli.clone();
+
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            // A second "start with Windows" launch shouldn't pop the window up.
-            if !args.iter().any(|a| a == "--hidden") {
-                show_main_window(app);
+            // A second launch hands over its flags, e.g. `tasksng --quick-add`.
+            match cli::Cli::parse(&args) {
+                Ok(cli) => handle_cli(app, &cli, false),
+                Err(_) => show_main_window(app),
             }
         }))
         .plugin(
@@ -783,18 +1011,25 @@ pub fn run() {
                 .level(log::LevelFilter::Info)
                 .level_for("hyper_util", log::LevelFilter::Warn)
                 .level_for("reqwest", log::LevelFilter::Warn)
+                .level_for("zbus", log::LevelFilter::Warn)
+                .level_for("tracing", log::LevelFilter::Warn)
                 .max_file_size(2_000_000)
                 .build(),
         )
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_autostart::Builder::new().args(["--hidden"]).build())
+        .plugin(tauri_plugin_opener::init());
+    #[cfg(not(target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_autostart::Builder::new().args(["--hidden"]).build());
+    let app = builder
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
                     if event.state() == ShortcutState::Pressed {
-                        quick_add::toggle(app);
+                        // Not on the hotkey thread: on X11 that thread is
+                        // what (un)registering waits for on the main thread.
+                        let handle = app.clone();
+                        let _ = app.run_on_main_thread(move || quick_add::toggle(&handle));
                     }
                 })
                 .build(),
@@ -807,45 +1042,36 @@ pub fn run() {
                 .build(),
         )
         .on_window_event(on_window_event)
-        .setup(|app| {
+        .setup(move |app| {
+            let cli = first_cli;
             let data_dir = app.path().app_data_dir()?;
             let store = Store::open(&data_dir.join("tasks-cache.json"));
             let settings_path = data_dir.join("settings.json");
             let settings = settings::load(&settings_path);
             let mut status = SyncStatus { state: "signed-out", message: None, last_sync: None, pending: 0 };
-            let mut conn = None;
-            if let Some(account) = store.account() {
+            let signed_in = store.account().is_some();
+            if signed_in {
+                status.state = "idle";
                 status.last_sync = store.last_sync().map(str::to_string);
                 status.pending = store.pending_count();
-                let password = secrets::load(&data_dir, &account.home_url, &account.username);
-                match (password, Url::parse(&account.home_url)) {
-                    (Some(password), Ok(home)) => {
-                        let creds = Credentials { username: account.username.clone(), password };
-                        match DavClient::new(&home, creds, account.accept_invalid_certs) {
-                            Ok(client) => {
-                                conn = Some(Arc::new(Connection { client, home }));
-                                status.state = "idle";
-                            }
-                            Err(e) => {
-                                status.state = "error";
-                                status.message = Some(e.to_string());
-                            }
-                        }
-                    }
-                    _ => {
-                        status.state = "auth-required";
-                        status.message = Some("Please sign in again".into());
-                    }
-                }
             }
-            let start_hidden = std::env::args().any(|a| a == "--hidden");
             let shortcut = settings.quick_add_shortcut.clone();
             notify::register(&app.config().identifier, &data_dir);
+            autostart::heal();
+
+            // tray-icon aborts the process if it can't load AppIndicator.
+            let handle = app.handle().clone();
+            let tray_created = desktop::tray_library_available()
+                && tray::create(&handle).inspect_err(|e| log::error!("creating the tray icon failed: {e}")).is_ok();
+            if !tray_created {
+                log::warn!("no tray icon: AppIndicator library not found");
+            }
+
             app.manage(AppState {
                 alarms: Alarms::open(&data_dir.join("reminders.json")),
                 data_dir,
                 store: Arc::new(Mutex::new(store)),
-                conn: RwLock::new(conn),
+                conn: RwLock::new(None),
                 sync_lock: tokio::sync::Mutex::new(()),
                 save_lock: tokio::sync::Mutex::new(()),
                 push_pending: AtomicBool::new(false),
@@ -854,20 +1080,46 @@ pub fn run() {
                 settings_path,
                 settings: Mutex::new(settings),
                 shortcut_error: Mutex::new(None),
-                start_hidden,
+                start_hidden: cli.hidden || cli.quick_add,
+                creds_loaded: tokio::sync::watch::channel(!signed_in).0,
+                // The start-up read counts as an attempt.
+                creds_retry: Mutex::new(Some(std::time::Instant::now())),
+                tray_created,
                 quick_add_pending: AtomicBool::new(false),
                 quick_add_loaded: AtomicBool::new(false),
                 quick_add_creating: AtomicBool::new(false),
             });
-
-            let handle = app.handle().clone();
-            if let Err(e) = tray::create(&handle) {
-                log::error!("creating the tray icon failed: {e}");
+            if signed_in {
+                load_credentials(handle.clone());
             }
+
             let error = apply_shortcut(&handle, shortcut.as_deref());
             *app.state::<AppState>().shortcut_error.lock().unwrap_or_else(|p| p.into_inner()) = error;
+            handle_cli(&handle, &cli, true);
+
+            #[cfg(unix)]
+            {
+                // Logging out or `systemctl stop` sends SIGTERM: save first.
+                let handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    use tokio::signal::unix::{signal, SignalKind};
+                    let (Ok(mut term), Ok(mut int)) = (signal(SignalKind::terminate()), signal(SignalKind::interrupt()))
+                    else {
+                        return;
+                    };
+                    tokio::select! {
+                        _ = term.recv() => {}
+                        _ = int.recv() => {}
+                    }
+                    handle.exit(0);
+                });
+            }
 
             tauri::async_runtime::spawn(async move {
+                {
+                    let h = handle.clone();
+                    let _ = tauri::async_runtime::spawn_blocking(move || log_environment(&h.state::<AppState>())).await;
+                }
                 // The UI shows the window once it has painted; this is a
                 // safety net in case the web view fails to load.
                 tokio::time::sleep(Duration::from_secs(3)).await;
@@ -880,7 +1132,7 @@ pub fn run() {
                 }
                 // Load the quick add window in the background so the
                 // shortcut opens it instantly.
-                if handle.state::<AppState>().settings().quick_add_shortcut.is_some() {
+                if shortcut_active(&handle.state::<AppState>()) {
                     quick_add::prepare(&handle);
                 }
                 loop {
@@ -915,12 +1167,14 @@ pub fn run() {
             open_link,
             reminder_action,
             test_notification,
+            quit_app,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building TasksNG");
 
     app.run(|handle, event| {
         if let RunEvent::Exit = event {
+            notify::close_all();
             if let Some(state) = handle.try_state::<AppState>() {
                 let _guard = state.save_lock.blocking_lock();
                 if let Err(e) = state.store().save_now() {

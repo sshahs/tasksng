@@ -4,6 +4,7 @@ import {
   CircleIcon,
   EyeIcon,
   HashIcon,
+  LogOutIcon,
   ListPlusIcon,
   MoonIcon,
   PlusIcon,
@@ -23,6 +24,7 @@ import {
   CommandShortcut,
 } from "@/components/ui/command";
 import { useTheme } from "@/hooks/use-theme";
+import { api, isTauri } from "@/lib/api";
 import { formatDue, parseDue } from "@/lib/dates";
 import { SMART_VIEWS, useStore, type ViewId } from "@/lib/store";
 import { tagCounts } from "@/lib/views";
@@ -142,6 +144,11 @@ export function CommandPalette() {
           <Item query={query} label="Settings" onSelect={run(() => useStore.getState().set({ settingsOpen: true }))}>
             <SettingsIcon /> Settings
           </Item>
+          {isTauri && (
+            <Item query={query} label="Quit TasksNG" onSelect={run(() => void api.quitApp())}>
+              <LogOutIcon /> Quit TasksNG
+            </Item>
+          )}
         </Group>
       </CommandList>
     </CommandDialog>

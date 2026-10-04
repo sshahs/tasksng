@@ -1,11 +1,15 @@
 #![cfg_attr(not(windows), allow(dead_code))]
 
-//! Windows notifications ("toasts").
+//! Desktop notifications.
 //!
-//! Reminder toasts carry *Snooze* (with a duration picker) and *Done*
-//! buttons. Clicks are delivered to this process while it runs, which it does
-//! in the notification area. On other platforms (development only) showing a
-//! toast fails and the caller falls back to an in-app message.
+//! - Windows: toasts. Reminders carry *Snooze* (with a duration picker) and
+//!   *Done* buttons.
+//! - Linux: freedesktop notifications over D-Bus, with *Snooze 10 min* and
+//!   *Done* buttons where the notification server supports actions.
+//!
+//! Clicks are delivered to this process while it runs, which it does in the
+//! background. Where no notification service is available, showing fails and
+//! the caller falls back to an in-app message.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -100,10 +104,187 @@ pub fn show(app_id: &str, toast: &Toast, handler: Handler) -> Result<(), String>
     {
         win::show(app_id, toast, handler).map_err(|e| e.to_string())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app_id;
+        linux::show(toast, handler)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (app_id, toast, handler);
-        Err("notifications are only available on Windows".into())
+        Err("notifications are not available on this system".into())
+    }
+}
+
+/// Whether notifications can be shown, and whether they can carry buttons.
+pub fn capabilities() -> (bool, bool) {
+    #[cfg(windows)]
+    {
+        (true, true)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux::capabilities()
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        (false, false)
+    }
+}
+
+/// Removes notifications this process showed; their buttons would do
+/// nothing once it has quit.
+pub fn close_all() {
+    #[cfg(target_os = "linux")]
+    linux::close_all();
+}
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    use zbus::blocking::Connection;
+    use zbus::zvariant::Value;
+
+    use super::{Handler, Toast, ToastAction, DEFAULT_SNOOZE};
+
+    #[zbus::proxy(
+        interface = "org.freedesktop.Notifications",
+        default_service = "org.freedesktop.Notifications",
+        default_path = "/org/freedesktop/Notifications"
+    )]
+    trait Notifications {
+        #[allow(clippy::too_many_arguments)]
+        fn notify(
+            &self,
+            app_name: &str,
+            replaces_id: u32,
+            app_icon: &str,
+            summary: &str,
+            body: &str,
+            actions: &[&str],
+            hints: HashMap<&str, Value<'_>>,
+            expire_timeout: i32,
+        ) -> zbus::Result<u32>;
+        fn close_notification(&self, id: u32) -> zbus::Result<()>;
+        fn get_capabilities(&self) -> zbus::Result<Vec<String>>;
+        #[zbus(signal)]
+        fn action_invoked(&self, id: u32, action_key: String) -> zbus::Result<()>;
+        #[zbus(signal)]
+        fn notification_closed(&self, id: u32, reason: u32) -> zbus::Result<()>;
+    }
+
+    struct Live {
+        reminder_uid: Option<String>,
+        open_uid: Option<String>,
+        handler: Handler,
+    }
+
+    struct Daemon {
+        proxy: NotificationsProxyBlocking<'static>,
+        caps: Vec<String>,
+        live: Arc<Mutex<HashMap<u32, Live>>>,
+    }
+
+    /// Connected lazily and only cached once it works, so a notification
+    /// server that starts after TasksNG (common at login) is picked up.
+    static DAEMON: Mutex<Option<Arc<Daemon>>> = Mutex::new(None);
+
+    fn connect() -> Result<Daemon, String> {
+        let conn = Connection::session().map_err(|e| e.to_string())?;
+        let proxy = NotificationsProxyBlocking::new(&conn).map_err(|e| e.to_string())?;
+        // Fails quickly (ServiceUnknown) when no notification server runs.
+        let caps = proxy.get_capabilities().map_err(|e| e.to_string())?;
+        let live: Arc<Mutex<HashMap<u32, Live>>> = Arc::default();
+        let actions = proxy.receive_action_invoked().map_err(|e| e.to_string())?;
+        let closed = proxy.receive_notification_closed().map_err(|e| e.to_string())?;
+        let l = live.clone();
+        std::thread::spawn(move || {
+            for sig in actions {
+                let Ok(a) = sig.args() else { continue };
+                let Some(n) = l.lock().unwrap_or_else(|p| p.into_inner()).remove(&a.id) else { continue };
+                let action = match (a.action_key.as_str(), n.reminder_uid) {
+                    ("done", Some(uid)) if !uid.is_empty() => ToastAction::Done(uid),
+                    ("snooze", Some(uid)) if !uid.is_empty() => ToastAction::Snooze(uid, DEFAULT_SNOOZE),
+                    _ => ToastAction::Open(n.open_uid),
+                };
+                (n.handler)(action);
+            }
+        });
+        let l = live.clone();
+        std::thread::spawn(move || {
+            for sig in closed {
+                if let Ok(c) = sig.args() {
+                    l.lock().unwrap_or_else(|p| p.into_inner()).remove(&c.id);
+                }
+            }
+        });
+        Ok(Daemon { proxy, caps, live })
+    }
+
+    fn daemon() -> Result<Arc<Daemon>, String> {
+        let mut slot = DAEMON.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(d) = slot.as_ref() {
+            return Ok(d.clone());
+        }
+        let d = Arc::new(connect()?);
+        *slot = Some(d.clone());
+        Ok(d)
+    }
+
+    fn escape(s: &str) -> String {
+        s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    }
+
+    pub fn capabilities() -> (bool, bool) {
+        match daemon() {
+            Ok(d) => (true, d.caps.iter().any(|c| c == "actions")),
+            Err(_) => (false, false),
+        }
+    }
+
+    pub fn show(toast: &Toast, handler: Handler) -> Result<(), String> {
+        let d = daemon()?;
+        let has = |cap: &str| d.caps.iter().any(|c| c == cap);
+        let body = if has("body-markup") { escape(&toast.body) } else { toast.body.clone() };
+        let reminder = toast.reminder_uid.is_some();
+        let mut actions: Vec<&str> = vec!["default", "Open"];
+        if reminder && has("actions") {
+            actions.extend(["snooze", "Snooze 10 min", "done", "Done"]);
+        }
+        let mut hints: HashMap<&str, Value<'_>> = HashMap::new();
+        // Matches share/applications/TasksNG.desktop, for the icon and name.
+        hints.insert("desktop-entry", Value::from("TasksNG"));
+        hints.insert("urgency", Value::from(if reminder { 2u8 } else { 1u8 }));
+        if reminder {
+            hints.insert("sound-name", Value::from("alarm-clock-elapsed"));
+        }
+        // Reminders stay until dealt with; other messages use the default.
+        let timeout = if reminder { 0 } else { -1 };
+        let id = d
+            .proxy
+            .notify("TasksNG", 0, "tasksng", &toast.title, &body, &actions, hints, timeout)
+            .map_err(|e| {
+                // The server may have gone away; reconnect next time.
+                *DAEMON.lock().unwrap_or_else(|p| p.into_inner()) = None;
+                e.to_string()
+            })?;
+        d.live.lock().unwrap_or_else(|p| p.into_inner()).insert(
+            id,
+            Live { reminder_uid: toast.reminder_uid.clone(), open_uid: toast.open_uid.clone(), handler },
+        );
+        Ok(())
+    }
+
+    pub fn close_all() {
+        let d = DAEMON.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        if let Some(d) = d {
+            let ids: Vec<u32> = d.live.lock().unwrap_or_else(|p| p.into_inner()).drain().map(|(id, _)| id).collect();
+            for id in ids {
+                let _ = d.proxy.close_notification(id);
+            }
+        }
     }
 }
 

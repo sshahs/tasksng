@@ -15,7 +15,7 @@ pub mod sync;
 pub enum Error {
     #[error("Can't reach the server ({0})")]
     Network(String),
-    #[error("The server's TLS certificate isn't trusted ({0}). Install your certificate authority in Windows, or enable “Accept invalid TLS certificates” under Advanced.")]
+    #[error("The server's TLS certificate isn't trusted ({0}). Add your certificate authority to the system's trusted certificates, or enable “Accept invalid TLS certificates” under Advanced.")]
     Certificate(String),
     #[error("The server rejected the username or password")]
     Unauthorized,

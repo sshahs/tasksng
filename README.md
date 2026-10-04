@@ -1,7 +1,8 @@
 # TasksNG
 
-A fast, keyboard-friendly task manager for Windows 10 and 11 that syncs with your
-[Baikal](https://sabre.io/baikal/) server (and other CalDAV servers built on sabre/dav).
+A fast, keyboard-friendly task manager for Windows 10 and 11 and Linux (packaged for
+[NixOS](#nixos-and-nix)) that syncs with your [Baikal](https://sabre.io/baikal/) server (and
+other CalDAV servers built on sabre/dav).
 
 - **Instant**: every action is applied locally first and synced in the background,
   so the UI never waits for the network. The app starts from a local cache in
@@ -95,6 +96,8 @@ search in the sidebar.
 
 ## Install
 
+### Windows
+
 Download the latest build from the **Actions** tab (artifact `TasksNG-windows-x64`) or from
 **Releases** when a version is tagged:
 
@@ -104,6 +107,78 @@ Download the latest build from the **Actions** tab (artifact `TasksNG-windows-x6
 - `TasksNG-portable.exe`: single executable, no installation (needs WebView2, which is
   part of Windows 11 and of up-to-date Windows 10). The portable version doesn't update
   itself; installed versions do.
+
+### NixOS and Nix
+
+The repository is a flake with the package (`x86_64-linux`, `aarch64-linux`), a NixOS module,
+an overlay and a development shell. Try it without installing:
+
+```sh
+nix run github:sshahs/tasksng
+```
+
+Install it system-wide with the NixOS module:
+
+```nix
+# flake.nix
+{
+  inputs.tasksng.url = "github:sshahs/tasksng";
+  # Optional: build against your nixpkgs instead of the one CI tests with.
+  # inputs.tasksng.inputs.nixpkgs.follows = "nixpkgs";
+
+  outputs = { nixpkgs, tasksng, ... }: {
+    nixosConfigurations.my-pc = nixpkgs.lib.nixosSystem {
+      modules = [
+        tasksng.nixosModules.default
+        {
+          programs.tasksng.enable = true;
+          # programs.tasksng.autostart = true; # start in the background at login, for everyone
+          # programs.tasksng.keyring = true;   # GNOME Keyring for window managers (Sway, Hyprland, i3 …)
+        }
+      ];
+    };
+  };
+}
+```
+
+Or add the package yourself: `tasksng.packages.${pkgs.system}.default` in
+`environment.systemPackages` or Home Manager's `home.packages`, or use `tasksng.overlays.default`
+to get `pkgs.tasksng`. Without flakes, import `nix/module.nix` from a checkout (or call
+`nix/package.nix` with `callPackage`). `nix profile install github:sshahs/tasksng` works too.
+
+Updates come with your system: `nix flake update tasksng` and then `nixos-rebuild switch` (or
+`home-manager switch`, `nix profile upgrade`). TasksNG doesn't update itself when installed with
+Nix. To update the running copy, quit it (tray menu or <kbd>Ctrl</kbd>+<kbd>Q</kbd>) and start
+it again.
+
+On Linux:
+
+- **Password**: stored in your desktop's keyring through the Secret Service API (GNOME Keyring,
+  KWallet, KeePassXC …). Without one (e.g. a bare window manager), it is kept in a file only you
+  can read (`~/.local/share/app.tasksng.desktop/credentials.json`) and moved into the keyring
+  once one is running. `programs.tasksng.keyring = true` turns on GNOME Keyring.
+- **Reminders** are desktop notifications (any freedesktop notification server: GNOME, KDE,
+  dunst, mako, swaync …) with *Snooze* and *Done* buttons where the server supports buttons.
+- **Tray icon**: shown wherever StatusNotifierItem/AppIndicator icons are (KDE, Waybar, most
+  panels; GNOME needs the *AppIndicator and KStatusNotifierItem Support* extension). Without a
+  tray, closing the window still keeps TasksNG running for reminders: open it again from the
+  app launcher and quit with <kbd>Ctrl</kbd>+<kbd>Q</kbd> or *Quit TasksNG* in the command
+  palette. You can also turn off *Keep running in the background* in Settings.
+- **Quick add**: the global shortcut works on X11. Wayland doesn't let apps grab keys, so bind a
+  shortcut in your desktop's keyboard settings to the command `tasksng --quick-add` (Sway:
+  `bindsym $mod+Alt+n exec tasksng --quick-add`; Hyprland:
+  `bind = SUPER ALT, N, exec, tasksng --quick-add`). For tiling window managers, float the box:
+  `for_window [title="^Quick add · TasksNG$"] floating enable` (Sway/i3) or
+  `windowrulev2 = float, title:^(Quick add · TasksNG)$` (Hyprland).
+- **Start at login** (Settings) writes `~/.config/autostart/TasksNG.desktop`, which runs
+  `tasksng --hidden` from your profile, so it keeps working after updates and garbage
+  collection.
+- **Self-signed certificates**: add your CA with `security.pki.certificateFiles` rather than
+  turning on *Accept invalid TLS certificates*.
+- Command line: `tasksng --quick-add | --show | --sync | --quit | --hidden | --version`. With
+  TasksNG running, these act on the running copy.
+
+### First start
 
 On first start, enter your Baikal address (e.g. `https://dav.example.com`), username and
 password. The app discovers your task lists automatically via `/.well-known/caldav` or
@@ -117,7 +192,8 @@ task-only calendars.
 ## Reminders and running in the background
 
 TasksNG shows reminders while it runs, so by default closing the window keeps it running in the
-notification area (next to the clock); right-click its icon to quit. Settings has options to quit
+notification area (next to the clock); right-click its icon to quit. (On Linux, see
+[NixOS and Nix](#nixos-and-nix) for desktops without a tray.) Settings has options to quit
 on close instead and to start TasksNG when you sign in to Windows (it then starts quietly in the
 notification area).
 
@@ -179,7 +255,7 @@ password is `demo`).
 ```sh
 npm test                     # UI logic (quick add, views, search, sorting, drag and drop, Markdown, repeat rules)
 cargo test -p tasks-core     # iCalendar, recurrence, reminders, store, auth unit tests
-cargo test -p tasksng        # notification payloads (needs the Tauri build dependencies)
+cargo test -p tasksng        # notification payloads, command line, password file (needs the Tauri build dependencies)
 
 # End-to-end against a real sabre/dav server configured exactly like Baikal:
 cd tools/baikal-dev-server && composer install
@@ -190,8 +266,17 @@ TASKSNG_TEST_URL=http://127.0.0.1:8800 cargo test -p tasks-core --test baikal --
 TASKSNG_TEST_URL=http://127.0.0.1:8801 cargo test -p tasks-core --test baikal -- --test-threads=1
 ```
 
-CI (`.github/workflows/build.yml`) runs all of the above and builds the Windows installers
-on `windows-latest` for every push.
+CI (`.github/workflows/build.yml`) runs all of the above, builds the Windows installers
+on `windows-latest` and builds the Nix package and checks the NixOS module for every push.
+
+### Nix
+
+`nix develop` gives a shell with Rust, Node, the GTK/WebKit libraries, `cargo tauri` and PHP
+for the Baikal test server; `npm install && npm run app:dev` then runs the app. `nix build`
+builds the package (`./result/bin/tasksng`), `nix flake check` also checks the NixOS module, and
+`nix fmt` formats the Nix files. The package reads its version from `src-tauri/tauri.conf.json`
+and needs no hashes: Rust crates and npm packages are taken from `Cargo.lock` and
+`package-lock.json`, so dependency updates need no change to the Nix files.
 
 ### Releases
 

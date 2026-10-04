@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { isWindows } from "@/lib/platform";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -101,8 +102,9 @@ export function ConnectForm({
           <div className="grid gap-1">
             <Label htmlFor="insecure">Accept invalid TLS certificates</Label>
             <p className="text-muted-foreground text-xs">
-              Only for self-signed certificates on your own network. Prefer installing your CA certificate in Windows
-              instead — the app trusts the Windows certificate store.
+              {isWindows
+                ? "Only for self-signed certificates on your own network. Prefer installing your CA certificate in Windows instead — the app trusts the Windows certificate store."
+                : "Only for self-signed certificates on your own network. Prefer adding your CA certificate to the system's trusted certificates instead (on NixOS: security.pki.certificateFiles)."}
             </p>
           </div>
         </div>
@@ -120,7 +122,9 @@ export function ConnectForm({
         {busy ? "Connecting…" : submitLabel}
       </Button>
       <p className="text-muted-foreground text-center text-xs">
-        Your password is stored securely in Windows Credential Manager.
+        {isWindows
+          ? "Your password is stored securely in Windows Credential Manager."
+          : "Your password is stored in your desktop's keyring (GNOME Keyring, KWallet, KeePassXC…)."}
       </p>
     </form>
   );

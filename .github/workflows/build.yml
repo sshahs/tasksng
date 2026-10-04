@@ -73,6 +73,64 @@ jobs:
         if: failure()
         run: tail -n 100 /tmp/digest.log /tmp/basic.log || true
 
+  linux:
+    name: Linux app (clippy, tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux
+
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libssl-dev libdbus-1-dev libxdo-dev pkg-config
+
+      - name: Frontend (embedded into the app)
+        run: |
+          npm ci
+          npm run build
+
+      - name: Clippy
+        run: cargo clippy -p tasksng --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test -p tasksng
+
+      - name: --version works without a display or D-Bus
+        run: |
+          cargo build -p tasksng
+          env -i target/debug/tasksng --version | grep -F "$(node -p 'require("./src-tauri/tauri.conf.json").version')"
+
+  nix:
+    name: Nix flake (NixOS package)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: Build the package
+        run: nix build .#default -L
+
+      - name: Smoke test
+        run: ./result/bin/tasksng --version
+
+      - name: Flake checks (package, NixOS module)
+        run: nix flake check -L
+
   windows:
     name: Windows installer
     needs: test
