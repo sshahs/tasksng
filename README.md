@@ -76,7 +76,9 @@ nix.settings = {
 Run `nixos-rebuild switch` with that setting before you add TasksNG, so the rebuild that installs
 TasksNG already uses the cache.
 
-To install it with the NixOS module:
+#### With the NixOS module
+
+Add TasksNG to your system flake:
 
 ```nix
 # flake.nix
@@ -101,16 +103,38 @@ To install it with the NixOS module:
 ```
 
 You can also add `tasksng.packages.${pkgs.system}.default` to `environment.systemPackages` or Home
-Manager's `home.packages` yourself, and `nix profile install github:sshahs/tasksng` works too.
-Those all use the cached build. `tasksng.overlays.default` gives you `pkgs.tasksng` built with
-your own nixpkgs, which means compiling it. Without flakes, import `nix/module.nix` from a
-checkout, or call `nix/package.nix` with `callPackage`.
+Manager's `home.packages` yourself, which uses the cached build as well.
+`tasksng.overlays.default` gives you `pkgs.tasksng` built with your own nixpkgs, which means
+compiling it. Without flakes, import `nix/module.nix` from a checkout, or call `nix/package.nix`
+with `callPackage`.
 
-Nix installs update with the rest of your system: run `nix flake update tasksng` and then
-`nixos-rebuild switch` (or `home-manager switch`, or `nix profile upgrade`). The new version
-starts the next time you start TasksNG, so quit the running copy from the tray menu or with
-<kbd>Ctrl</kbd>+<kbd>Q</kbd>. See [Running on Linux](#running-on-linux) for keyrings, trays,
-notifications and Wayland.
+To update, run `nix flake update tasksng` and then `nixos-rebuild switch` (or
+`home-manager switch`).
+
+#### With nix profile
+
+To install TasksNG for your user only, without changing your system configuration (apart from
+the cache setting above):
+
+```sh
+nix profile install github:sshahs/tasksng   # also called `nix profile add` in newer Nix
+```
+
+TasksNG then appears in your app launcher, and `tasksng` is on your PATH, which *Start TasksNG
+when you log in* in Settings relies on.
+
+```sh
+nix profile upgrade tasksng   # update to the latest version
+nix profile remove tasksng    # uninstall
+```
+
+The module's `programs.tasksng.keyring` option isn't available this way. GNOME and KDE Plasma
+already run a keyring; on Sway, Hyprland or i3, set `services.gnome.gnome-keyring.enable = true;`
+in your system configuration, or TasksNG keeps your password in a file only you can read.
+
+However you installed it, a new version starts the next time you start TasksNG, so quit the
+running copy from the tray menu or with <kbd>Ctrl</kbd>+<kbd>Q</kbd> after updating. See
+[Running on Linux](#running-on-linux) for keyrings, trays, notifications and Wayland.
 
 ### Connecting to Baikal
 
