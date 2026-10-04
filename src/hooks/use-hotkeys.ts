@@ -38,7 +38,9 @@ export function useHotkeys(hotkeys: Hotkey[]) {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.isComposing) return;
       // Let menus and dialogs handle their own keys.
-      const inOverlay = (e.target as HTMLElement | null)?.closest?.("[role=dialog],[role=menu],[role=listbox]");
+      const inOverlay = (e.target as HTMLElement | null)?.closest?.(
+        "[role=dialog],[role=alertdialog],[role=menu],[data-radix-popper-content-wrapper]",
+      );
       for (const h of ref.current) {
         if (!matches(e, h.keys)) continue;
         if (!h.inInputs && (isTyping(e.target) || inOverlay)) continue;

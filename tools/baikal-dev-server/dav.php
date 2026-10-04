@@ -28,13 +28,10 @@ $pdo = new PDO('sqlite:'.$dbPath);
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
 if ($fresh) {
-    $sqlDir = __DIR__.'/vendor/sabre/dav/examples/sql/';
-    foreach (['users', 'principals', 'calendars', 'propertystorage', 'locks'] as $part) {
-        foreach (array_filter(array_map('trim', explode(';', file_get_contents($sqlDir."sqlite.$part.sql")))) as $stmt) {
-            $pdo->exec($stmt);
-        }
+    foreach (array_filter(array_map('trim', explode(';', file_get_contents(__DIR__.'/schema.sql')))) as $stmt) {
+        $pdo->exec($stmt);
     }
-    // The example data contains admin/admin; replace it with Baikal-like users.
+    // The schema's sample data contains admin/admin; replace it with Baikal-like users.
     $pdo->exec('DELETE FROM users');
     $pdo->exec('DELETE FROM principals');
     foreach (['test' => 'test', 'other' => 'other'] as $user => $password) {

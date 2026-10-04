@@ -104,17 +104,22 @@ function DetailBody({ task }: { task: Task }) {
     window.clearTimeout(notesTimer.current);
     if (value !== task.description) update({ description: value || null });
   };
-  // Flush unsaved notes when switching tasks.
-  const notesRef = useRef(notes);
-  notesRef.current = notes;
+  // Switching tasks unmounts this pane without a reliable blur, so flush
+  // whatever is still being edited.
+  const draft = useRef({ title, notes });
+  draft.current = { title, notes };
   useEffect(
     () => () => {
       window.clearTimeout(notesTimer.current);
-      if (editingNotes.current && notesRef.current !== task.description) {
-        void useStore.getState().updateTask(task.id, { description: notesRef.current || null });
-      }
+      const latest = useStore.getState().tasks[task.id];
+      if (!latest) return;
+      const patch: TaskPatch = {};
+      const t = draft.current.title.replace(/\s+/g, " ").trim();
+      if (editingTitle.current && t && t !== latest.summary) patch.summary = t;
+      if (editingNotes.current && draft.current.notes !== latest.description) patch.description = draft.current.notes || null;
+      if (Object.keys(patch).length) void useStore.getState().updateTask(task.id, patch);
     },
-    [],
+    [task.id],
   );
 
   const subtasks = useMemo(

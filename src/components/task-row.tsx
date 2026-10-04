@@ -15,6 +15,12 @@ import type { Task, TaskList } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { PriorityFlag, priorityBorder, priorityLevel } from "./priority";
 
+/** Clicking row controls must neither select the row nor steal keyboard focus. */
+function keepFocus(e: React.MouseEvent) {
+  e.preventDefault();
+  e.stopPropagation();
+}
+
 export interface TaskRowProps {
   task: Task;
   depth: number;
@@ -67,7 +73,7 @@ export const TaskRow = memo(function TaskRow({
         type="button"
         tabIndex={-1}
         aria-label={collapsed ? "Expand subtasks" : "Collapse subtasks"}
-        onMouseDown={(e) => e.stopPropagation()}
+        onMouseDown={keepFocus}
         onClick={() => useStore.getState().toggleCollapsed(task.uid)}
         className={cn(
           "text-muted-foreground hover:text-foreground -ml-1 mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-sm",
@@ -79,7 +85,8 @@ export const TaskRow = memo(function TaskRow({
       <Checkbox
         checked={task.completed}
         disabled={readOnly}
-        onMouseDown={(e) => e.stopPropagation()}
+        tabIndex={-1}
+        onMouseDown={keepFocus}
         onCheckedChange={() => void useStore.getState().toggleComplete(task.id)}
         aria-label={task.completed ? "Mark as not done" : "Mark as done"}
         className={cn(

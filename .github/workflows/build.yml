@@ -62,6 +62,10 @@ jobs:
           TASKSNG_TEST_URL=http://127.0.0.1:8800 cargo test -p tasks-core --test baikal -- --test-threads=1
           TASKSNG_TEST_URL=http://127.0.0.1:8801 cargo test -p tasks-core --test baikal -- --test-threads=1
 
+      - name: Server logs
+        if: failure()
+        run: tail -n 100 /tmp/digest.log /tmp/basic.log || true
+
   windows:
     name: Windows installer
     needs: test
