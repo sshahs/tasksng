@@ -3,6 +3,15 @@
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
+  # CI pushes every build of main to this cache, so installs download the
+  # finished package instead of compiling it.
+  nixConfig = {
+    extra-substituters = [ "https://tasksng.cachix.org" ];
+    extra-trusted-public-keys = [
+      "tasksng.cachix.org-1:FMPrtDc5KohOuU/tBd1bKryTqsz2igCxhkdO/gNn8Zg="
+    ];
+  };
+
   outputs =
     { self, nixpkgs }:
     let

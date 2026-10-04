@@ -115,12 +115,27 @@ jobs:
           env -i target/debug/tasksng --version | grep -F "$(node -p 'require("./src-tauri/tauri.conf.json").version')"
 
   nix:
-    name: Nix flake (NixOS package)
-    runs-on: ubuntu-latest
+    name: Nix flake (${{ matrix.system }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: x86_64-linux
+            runner: ubuntu-latest
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
 
       - uses: cachix/install-nix-action@v31
+
+      # Pulls from the binary cache and, with the token (not available to pull
+      # requests from forks), pushes what this job builds.
+      - uses: cachix/cachix-action@v16
+        with:
+          name: tasksng
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - name: Build the package
         run: nix build .#default -L

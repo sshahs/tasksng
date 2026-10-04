@@ -54,11 +54,27 @@ Builds of every commit are on the [Actions](https://github.com/sshahs/tasksng/ac
 ### NixOS and Nix
 
 The repository is a flake. It has the package for `x86_64-linux` and `aarch64-linux`, a NixOS
-module, an overlay and a development shell. To try TasksNG without installing it:
+module, an overlay and a development shell. CI builds the package for both systems and uploads it
+to the [tasksng.cachix.org](https://tasksng.cachix.org) binary cache, so Nix can download it
+ready-built. To try TasksNG without installing it:
 
 ```sh
 nix run github:sshahs/tasksng
 ```
+
+Nix asks whether to use the cache the flake suggests. Answer yes, or it compiles TasksNG from
+source, which takes 10 to 20 minutes. Only users that Nix trusts can add a cache this way. On
+NixOS, add the cache to your configuration once instead:
+
+```nix
+nix.settings = {
+  extra-substituters = [ "https://tasksng.cachix.org" ];
+  extra-trusted-public-keys = [ "tasksng.cachix.org-1:FMPrtDc5KohOuU/tBd1bKryTqsz2igCxhkdO/gNn8Zg=" ];
+};
+```
+
+Run `nixos-rebuild switch` with that setting before you add TasksNG, so the rebuild that installs
+TasksNG already uses the cache.
 
 To install it with the NixOS module:
 
@@ -66,8 +82,8 @@ To install it with the NixOS module:
 # flake.nix
 {
   inputs.tasksng.url = "github:sshahs/tasksng";
-  # Optional: build against your nixpkgs instead of the one CI tests with.
-  # inputs.tasksng.inputs.nixpkgs.follows = "nixpkgs";
+  # Leave out `inputs.tasksng.inputs.nixpkgs.follows`: the cache only has builds made
+  # with the nixpkgs in TasksNG's own flake.lock.
 
   outputs = { nixpkgs, tasksng, ... }: {
     nixosConfigurations.my-pc = nixpkgs.lib.nixosSystem {
@@ -85,9 +101,10 @@ To install it with the NixOS module:
 ```
 
 You can also add `tasksng.packages.${pkgs.system}.default` to `environment.systemPackages` or Home
-Manager's `home.packages` yourself, or apply `tasksng.overlays.default` to get `pkgs.tasksng`.
-`nix profile install github:sshahs/tasksng` works too. Without flakes, import `nix/module.nix`
-from a checkout, or call `nix/package.nix` with `callPackage`.
+Manager's `home.packages` yourself, and `nix profile install github:sshahs/tasksng` works too.
+Those all use the cached build. `tasksng.overlays.default` gives you `pkgs.tasksng` built with
+your own nixpkgs, which means compiling it. Without flakes, import `nix/module.nix` from a
+checkout, or call `nix/package.nix` with `callPackage`.
 
 Nix installs update with the rest of your system: run `nix flake update tasksng` and then
 `nixos-rebuild switch` (or `home-manager switch`, or `nix profile upgrade`). The new version
