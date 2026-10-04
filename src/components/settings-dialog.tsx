@@ -1,0 +1,226 @@
+import { useEffect, useState } from "react";
+import { LogOutIcon, MonitorIcon, MoonIcon, RefreshCwIcon, SunIcon } from "lucide-react";
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Kbd } from "@/components/ui/kbd";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { useTheme, type Theme } from "@/hooks/use-theme";
+import { appVersion } from "@/lib/api";
+import { relativeTime } from "@/lib/dates";
+import { getPref, setPref } from "@/lib/prefs";
+import { useStore } from "@/lib/store";
+import { cn } from "@/lib/utils";
+import { ConnectForm } from "./connect-form";
+
+export const SYNC_INTERVALS = [
+  { value: "1", label: "Every minute" },
+  { value: "5", label: "Every 5 minutes" },
+  { value: "15", label: "Every 15 minutes" },
+  { value: "30", label: "Every 30 minutes" },
+  { value: "0", label: "Only manually" },
+];
+
+export const SHORTCUTS: [string, string][] = [
+  ["N", "New task"],
+  ["Ctrl K", "Command palette / jump to task"],
+  ["Ctrl F", "Search"],
+  ["↑ ↓", "Move selection"],
+  ["Space", "Complete / reopen"],
+  ["Enter", "Edit title"],
+  ["1 2 3 0", "Set priority"],
+  ["T / M", "Due today / tomorrow"],
+  ["Del", "Delete"],
+  ["Ctrl Z", "Undo delete"],
+  ["Ctrl H", "Show / hide completed"],
+  ["Ctrl 1…9", "Switch list"],
+  ["Ctrl B", "Toggle sidebar"],
+  ["F5", "Sync now"],
+];
+
+const THEMES: { value: Theme; label: string; icon: React.ReactNode }[] = [
+  { value: "system", label: "System", icon: <MonitorIcon /> },
+  { value: "light", label: "Light", icon: <SunIcon /> },
+  { value: "dark", label: "Dark", icon: <MoonIcon /> },
+];
+
+export function SettingsDialog() {
+  const open = useStore((s) => s.settingsOpen);
+  const account = useStore((s) => s.account);
+  const status = useStore((s) => s.status);
+  const lastSync = useStore((s) => s.lastSync);
+  const { theme, setTheme } = useTheme();
+  const [interval, setIntervalPref] = useState(() => String(getPref("sync-interval", 5)));
+  const [reauth, setReauth] = useState(false);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const [version, setVersion] = useState("");
+
+  useEffect(() => {
+    if (open) {
+      void appVersion().then(setVersion);
+      setReauth(status.state === "auth-required");
+    }
+  }, [open, status.state]);
+
+  const close = () => useStore.getState().set({ settingsOpen: false });
+
+  return (
+    <>
+      <Dialog open={open} onOpenChange={(o) => !o && close()}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Settings</DialogTitle>
+            <DialogDescription className="sr-only">Account, appearance and sync settings</DialogDescription>
+          </DialogHeader>
+
+          {account && (
+            <section className="grid gap-3">
+              <h3 className="text-sm font-medium">Account</h3>
+              <div className="bg-muted/40 grid gap-1 rounded-md border p-3 text-sm">
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">Server</span>
+                  <span className="truncate">{account.serverUrl}</span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">User</span>
+                  <span className="truncate">{account.username}</span>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <span className="text-muted-foreground">Last sync</span>
+                  <span>{relativeTime(lastSync)}</span>
+                </div>
+                {status.message && <p className="text-destructive mt-1 text-xs">{status.message}</p>}
+              </div>
+              {reauth ? (
+                <div className="rounded-md border p-4">
+                  <ConnectForm
+                    initial={account}
+                    submitLabel="Sign in"
+                    onConnected={() => {
+                      setReauth(false);
+                      close();
+                    }}
+                  />
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={() => void useStore.getState().sync(true)}>
+                    <RefreshCwIcon className={cn(status.state === "syncing" && "animate-spin")} /> Sync now
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setReauth(true)}>
+                    Change password…
+                  </Button>
+                  <div className="flex-1" />
+                  <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setConfirmSignOut(true)}>
+                    <LogOutIcon /> Sign out
+                  </Button>
+                </div>
+              )}
+            </section>
+          )}
+
+          <Separator />
+
+          <section className="grid gap-3">
+            <h3 className="text-sm font-medium">Appearance</h3>
+            <div className="grid grid-cols-3 gap-2">
+              {THEMES.map((t) => (
+                <button
+                  key={t.value}
+                  onClick={() => setTheme(t.value)}
+                  className={cn(
+                    "hover:bg-accent flex flex-col items-center gap-1.5 rounded-md border p-3 text-sm [&_svg]:size-5",
+                    theme === t.value && "border-primary ring-primary/30 ring-2",
+                  )}
+                >
+                  {t.icon}
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <Separator />
+
+          <section className="flex items-center justify-between gap-4">
+            <div>
+              <Label>Sync automatically</Label>
+              <p className="text-muted-foreground mt-1 text-xs">Changes you make are always sent right away.</p>
+            </div>
+            <Select
+              value={interval}
+              onValueChange={(v) => {
+                setIntervalPref(v);
+                setPref("sync-interval", Number(v));
+                window.dispatchEvent(new Event("tasksng-sync-interval"));
+              }}
+            >
+              <SelectTrigger className="w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SYNC_INTERVALS.map((i) => (
+                  <SelectItem key={i.value} value={i.value}>
+                    {i.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </section>
+
+          <Separator />
+
+          <section className="grid gap-2">
+            <h3 className="text-sm font-medium">Keyboard shortcuts</h3>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
+              {SHORTCUTS.map(([k, label]) => (
+                <div key={k} className="flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground truncate">{label}</span>
+                  <Kbd>{k}</Kbd>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <p className="text-muted-foreground pt-2 text-center text-xs">TasksNG {version}</p>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={confirmSignOut} onOpenChange={setConfirmSignOut}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Sign out?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your tasks stay on the server. Changes that haven&apos;t been synced yet
+              {status.pending ? ` (${status.pending})` : ""} will be lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90 text-white"
+              onClick={() => {
+                close();
+                void useStore.getState().signOut();
+              }}
+            >
+              Sign out
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}

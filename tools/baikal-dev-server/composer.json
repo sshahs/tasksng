@@ -1,0 +1,9 @@
+{
+    "name": "tasksng/baikal-dev-server",
+    "description": "A local CalDAV server configured exactly like Baikal (sabre/dav 4) for developing and testing TasksNG.",
+    "type": "project",
+    "require": {
+        "php": ">=8.1",
+        "sabre/dav": "~4.6"
+    }
+}
