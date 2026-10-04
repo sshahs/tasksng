@@ -285,6 +285,10 @@ One-time setup: add the updater signing key as a repository secret named
 password, also add `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Keep a backup of the key: installed
 copies only accept updates signed with it.
 
+First set the new version in `src-tauri/tauri.conf.json`, `package.json` (`npm version X.Y.Z
+--no-git-tag-version`) and the workspace `Cargo.toml`, and commit it: the Nix package reads its
+version from the repository, while the Windows builds get it from CI.
+
 To publish a release, either run the **Build** workflow from the *Actions* tab
 (*Run workflow*, enter a version such as `0.2.0`), or push a tag:
 

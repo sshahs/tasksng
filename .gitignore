@@ -7,3 +7,6 @@ target/
 !.vscode/extensions.json
 src-tauri/gen/schemas/
 src-tauri/tauri.ci.conf.json
+
+# nix build
+/result
