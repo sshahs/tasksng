@@ -148,7 +148,8 @@ One-time setup: add the updater signing key as a repository secret named
 password, also add `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Keep a backup of the key: installed
 copies only accept updates signed with it.
 
-To publish a release:
+To publish a release, either run the **Build** workflow from the *Actions* tab
+(*Run workflow*, enter a version such as `0.2.0`), or push a tag:
 
 ```sh
 git tag v0.2.0
@@ -157,7 +158,7 @@ git push origin v0.2.0
 
 CI builds the installers with that version, signs them, generates `latest.json`
 (`scripts/updater-manifest.mjs`) and publishes everything as a GitHub release. Installed
-copies pick it up automatically. Tags must be plain `vX.Y.Z`; the MSI format doesn't allow
+copies pick it up automatically. Versions must be plain `X.Y.Z`; the MSI format doesn't allow
 pre-release suffixes.
 
 To use a different signing key, run `npx tauri signer generate -w tasksng.key`, put the

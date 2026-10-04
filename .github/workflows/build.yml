@@ -6,16 +6,23 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Publish a release with this version (e.g. 0.2.0). Leave empty for a normal build."
+        required: false
+        default: ""
 
 permissions:
   contents: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
+  # Set for release builds: a pushed vX.Y.Z tag, or a manual run with a version.
+  RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.release_version && format('v{0}', inputs.release_version) || '') }}
 
 jobs:
   test:
@@ -102,7 +109,7 @@ jobs:
           mkdir -p out
           cp target/release/bundle/nsis/*-setup.exe target/release/bundle/msi/*.msi out/
           cp target/release/tasksng.exe out/TasksNG-portable.exe
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          if [[ -n "$RELEASE_TAG" ]]; then
             cp target/release/bundle/nsis/*-setup.exe.sig target/release/bundle/msi/*.msi.sig out/
             node scripts/updater-manifest.mjs out
           fi
@@ -115,8 +122,11 @@ jobs:
           if-no-files-found: error
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          name: TasksNG ${{ env.RELEASE_TAG }}
           files: out/*
           generate_release_notes: true

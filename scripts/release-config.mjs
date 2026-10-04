@@ -1,16 +1,17 @@
 // Writes src-tauri/tauri.ci.conf.json, a config overlay for CI builds.
-// On a release tag (vX.Y.Z) it stamps the version and turns on signed updater
-// artifacts, which requires the TAURI_SIGNING_PRIVATE_KEY secret.
+// For a release (RELEASE_TAG=vX.Y.Z, set by the workflow) it stamps the version
+// and turns on signed updater artifacts, which requires the
+// TAURI_SIGNING_PRIVATE_KEY secret.
 import { writeFileSync } from "node:fs";
 
-const ref = process.env.GITHUB_REF ?? "";
+const tag = process.env.RELEASE_TAG ?? "";
 const overlay = {};
 
-if (ref.startsWith("refs/tags/v")) {
-  const version = ref.slice("refs/tags/v".length);
+if (tag) {
+  const version = tag.replace(/^v/, "");
   // MSI only accepts numeric versions, so no pre-release suffixes.
   if (!/^\d+\.\d+\.\d+$/.test(version)) {
-    console.error(`::error::Tag v${version} must look like vX.Y.Z`);
+    console.error(`::error::Release version "${version}" must look like X.Y.Z`);
     process.exit(1);
   }
   if (!process.env.TAURI_SIGNING_PRIVATE_KEY) {

@@ -2,14 +2,14 @@
 // https://github.com/<repo>/releases/latest/download/latest.json
 //
 // usage: node scripts/updater-manifest.mjs <dir with installers + .sig files>
-// env:   GITHUB_REPOSITORY, GITHUB_REF_NAME (the release tag)
+// env:   GITHUB_REPOSITORY, RELEASE_TAG (e.g. v0.2.0)
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const dir = process.argv[2] ?? "out";
 const repo = process.env.GITHUB_REPOSITORY;
-const tag = process.env.GITHUB_REF_NAME;
-if (!repo || !tag) throw new Error("GITHUB_REPOSITORY and GITHUB_REF_NAME must be set");
+const tag = process.env.RELEASE_TAG;
+if (!repo || !tag) throw new Error("GITHUB_REPOSITORY and RELEASE_TAG must be set");
 
 const files = readdirSync(dir);
 const entry = (suffix) => {
