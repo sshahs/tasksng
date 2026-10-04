@@ -1,11 +1,13 @@
 //! Platform independent core of TasksNG: iCalendar handling, a CalDAV client
 //! tuned for Baikal (sabre/dav) and an offline-first task store.
 
+pub mod alarms;
 pub mod dates;
 pub mod dav;
 pub mod ical;
 pub mod model;
 pub mod recur;
+pub mod reminders;
 pub mod store;
 pub mod sync;
 

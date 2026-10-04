@@ -14,11 +14,14 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tasks-core = { path = "../crates/tasks-core" }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-log = "2"
 tauri-plugin-process = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-opener = "2"
 # native-tls: reuse Windows' SChannel and certificate store like the sync client.
 tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "system-proxy"] }
 serde.workspace = true
@@ -26,6 +29,11 @@ serde_json.workspace = true
 tokio.workspace = true
 log.workspace = true
 reqwest = { version = "0.13", default-features = false }
+chrono.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
+# Toast notifications with buttons (reminders) and registering the app's
+# notification identity, which unpackaged apps have to do themselves.
+windows = { version = "0.62", features = ["UI_Notifications", "Data_Xml_Dom", "Foundation", "Foundation_Collections"] }
+windows-registry = "0.6"

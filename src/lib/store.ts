@@ -4,19 +4,25 @@ import { create } from "zustand";
 import { api, on } from "./api";
 import { formatDue, parseDue } from "./dates";
 import { getPref, setPref } from "./prefs";
+import type { SortMode } from "./sort";
 import type {
   Account,
   ConnectArgs,
+  DueReminder,
   NewTask,
+  Settings,
+  SettingsView,
   Snapshot,
   SyncStatus,
   Task,
   TaskList,
   TaskPatch,
+  TaskUpdate,
 } from "./types";
+import { isInView, listIdOf, searchIdOf, tagOf, type SavedSearch, type SmartView, type ViewId } from "./views";
 
-export type SmartView = "today" | "upcoming" | "important" | "all";
-export type ViewId = SmartView | `list:${string}`;
+export { listIdOf, searchIdOf, tagOf };
+export type { SavedSearch, SmartView, ViewId };
 
 export const SMART_VIEWS: { id: SmartView; label: string }[] = [
   { id: "today", label: "Today" },
@@ -24,10 +30,6 @@ export const SMART_VIEWS: { id: SmartView; label: string }[] = [
   { id: "important", label: "Important" },
   { id: "all", label: "All tasks" },
 ];
-
-export function listIdOf(view: ViewId): string | null {
-  return view.startsWith("list:") ? view.slice(5) : null;
-}
 
 interface State {
   ready: boolean;
@@ -53,6 +55,14 @@ interface State {
   listDialog: { mode: "create" } | { mode: "edit"; list: TaskList } | null;
   settingsOpen: boolean;
   lastUndo: { token: number; label: string } | null;
+  savedSearches: SavedSearch[];
+  /** Sort order chosen per view. */
+  sorts: Record<string, SortMode>;
+  /** Saved search being created or edited. */
+  searchDialog: { mode: "create"; query: string } | { mode: "edit"; search: SavedSearch } | null;
+  /** Tag being renamed. */
+  tagDialog: string | null;
+  settings: SettingsView | null;
 
   inflight: number;
   queued: Snapshot | null;
@@ -70,6 +80,7 @@ interface Actions {
   signOut(): Promise<void>;
   createTask(listId: string, input: NewTask): Promise<Task | null>;
   updateTask(id: string, patch: TaskPatch): Promise<void>;
+  updateTasks(updates: TaskUpdate[]): Promise<void>;
   toggleComplete(id: string): Promise<void>;
   deleteTasks(ids: string[]): Promise<void>;
   undo(): Promise<void>;
@@ -78,6 +89,17 @@ interface Actions {
   updateList(id: string, name: string | null, color: string | null): Promise<void>;
   deleteList(id: string): Promise<void>;
   defaultListId(): string | null;
+  sortFor(view: ViewId): SortMode;
+  setSort(view: ViewId, mode: SortMode): void;
+  saveSearch(name: string, query: string): void;
+  updateSavedSearch(id: string, name: string, query: string): void;
+  deleteSavedSearch(id: string): void;
+  renameTag(from: string, to: string): Promise<void>;
+  removeTag(tag: string): Promise<void>;
+  loadSettings(): Promise<void>;
+  saveSettings(patch: Partial<Settings> & { launchAtLogin?: boolean }): Promise<void>;
+  /** Shows a task, switching to its list when the current view hides it. */
+  openTask(id: string): void;
 }
 
 export type Store = State & Actions;
@@ -97,7 +119,8 @@ function sameTask(a: Task, b: Task): boolean {
     a.pending === b.pending &&
     a.modified === b.modified &&
     a.sortOrder === b.sortOrder &&
-    a.categories.join("\u0000") === b.categories.join("\u0000")
+    a.categories.join("\u0000") === b.categories.join("\u0000") &&
+    JSON.stringify(a.reminders) === JSON.stringify(b.reminders)
   );
 }
 
@@ -115,7 +138,8 @@ function optimistic(t: Task, p: TaskPatch): Task {
   const n: Task = { ...t, pending: true };
   if (p.summary !== undefined) n.summary = p.summary;
   if (p.description !== undefined) n.description = p.description ?? "";
-  if (p.status !== undefined && !t.rrule) {
+  // Completing a repeating task moves it on instead; the backend says where.
+  if (p.status !== undefined && (!t.rrule || p.status === "in-process" || p.status === "needs-action")) {
     n.status = p.status;
     n.completed = p.status === "completed" || p.status === "cancelled";
     n.completedAt = n.completed ? new Date().toISOString() : null;
@@ -126,7 +150,17 @@ function optimistic(t: Task, p: TaskPatch): Task {
   if (p.categories !== undefined) n.categories = p.categories;
   if (p.parentUid !== undefined) n.parentUid = p.parentUid;
   if (p.rrule !== undefined) n.rrule = p.rrule;
+  if (p.sortOrder !== undefined) n.sortOrder = p.sortOrder;
+  if (p.reminders !== undefined) n.reminders = p.reminders;
   return n;
+}
+
+function knownView(view: ViewId, lists: TaskList[], saved: SavedSearch[]): boolean {
+  const lid = listIdOf(view);
+  if (lid) return lists.some((l) => l.id === lid);
+  const sid = searchIdOf(view);
+  if (sid) return saved.some((s) => s.id === sid);
+  return true;
 }
 
 const initialStatus: SyncStatus = { state: "idle", message: null, lastSync: null, pending: 0 };
@@ -177,6 +211,11 @@ export const useStore = create<Store>()((set, get) => {
     listDialog: null,
     settingsOpen: false,
     lastUndo: null,
+    savedSearches: getPref<SavedSearch[]>("saved-searches", []),
+    sorts: getPref<Record<string, SortMode>>("sorts", {}),
+    searchDialog: null,
+    tagDialog: null,
+    settings: null,
     inflight: 0,
     queued: null,
 
@@ -186,12 +225,25 @@ export const useStore = create<Store>()((set, get) => {
       get().applySnapshot(snapshot, true);
       set({ status, ready: true });
       // A view pointing at a list that no longer exists falls back to Today.
-      const lid = listIdOf(get().view);
-      if (lid && !snapshot.lists.some((l) => l.id === lid)) set({ view: "today" });
+      if (!knownView(get().view, snapshot.lists, get().savedSearches)) set({ view: "today" });
+      void get().loadSettings();
 
       await on<Snapshot>("snapshot", (s) => get().applySnapshot(s));
       await on<SyncStatus>("sync-status", (status) => set({ status }));
       await on<string[]>("notices", (notices) => notices.forEach((n) => toast.warning(n, { duration: 8000 })));
+      await on<string>("open-task", (id) => get().openTask(id));
+      // Reminders shown inside the app when Windows notifications aren't available.
+      await on<DueReminder[]>("reminders", (due) =>
+        due.forEach((r) =>
+          toast(r.title, {
+            id: `reminder-${r.uid}`,
+            description: r.body,
+            duration: Number.POSITIVE_INFINITY,
+            action: { label: "Done", onClick: () => void api.reminderAction(r.uid, "done") },
+            cancel: { label: "Snooze 10 min", onClick: () => void api.reminderAction(r.uid, "snooze", 10) },
+          }),
+        ),
+      );
       })();
       return initPromise;
     },
@@ -319,6 +371,21 @@ export const useStore = create<Store>()((set, get) => {
       }
     },
 
+    async updateTasks(updates) {
+      if (!updates.length) return;
+      const before = get().tasks;
+      const next = { ...before };
+      for (const u of updates) if (next[u.id]) next[u.id] = optimistic(next[u.id], u.patch);
+      set({ tasks: next });
+      try {
+        const snapshot = await mutate(() => api.updateTasks(updates));
+        get().applySnapshot(snapshot, true);
+      } catch (e) {
+        set({ tasks: before });
+        fail(e);
+      }
+    },
+
     async toggleComplete(id) {
       const t = get().tasks[id];
       if (!t) return;
@@ -383,6 +450,97 @@ export const useStore = create<Store>()((set, get) => {
     async updateList(id, name, color) {
       const snapshot = await api.updateList(id, name, color);
       get().applySnapshot(snapshot, true);
+    },
+
+    sortFor(view) {
+      return get().sorts[view] ?? "smart";
+    },
+
+    setSort(view, mode) {
+      const sorts = { ...get().sorts, [view]: mode };
+      setPref("sorts", sorts);
+      set({ sorts });
+    },
+
+    saveSearch(name, query) {
+      const search: SavedSearch = { id: crypto.randomUUID(), name: name.trim() || query.trim(), query: query.trim() };
+      const savedSearches = [...get().savedSearches, search];
+      setPref("saved-searches", savedSearches);
+      set({ savedSearches });
+      get().setView(`search:${search.id}`);
+    },
+
+    updateSavedSearch(id, name, query) {
+      const savedSearches = get().savedSearches.map((s) =>
+        s.id === id ? { ...s, name: name.trim() || query.trim(), query: query.trim() } : s,
+      );
+      setPref("saved-searches", savedSearches);
+      set({ savedSearches });
+    },
+
+    deleteSavedSearch(id) {
+      const savedSearches = get().savedSearches.filter((s) => s.id !== id);
+      setPref("saved-searches", savedSearches);
+      set({ savedSearches });
+      if (searchIdOf(get().view) === id) get().setView("today");
+    },
+
+    async renameTag(from, to) {
+      const name = to.trim().replace(/^#/, "");
+      if (!name || name === from) return;
+      const key = from.toLowerCase();
+      const updates = Object.values(get().tasks)
+        .filter((t) => t.categories.some((c) => c.toLowerCase() === key))
+        .map((t) => {
+          const categories: string[] = [];
+          for (const c of t.categories) {
+            const v = c.toLowerCase() === key ? name : c;
+            if (!categories.some((x) => x.toLowerCase() === v.toLowerCase())) categories.push(v);
+          }
+          return { id: t.id, patch: { categories } };
+        });
+      await get().updateTasks(updates);
+      if (tagOf(get().view)?.toLowerCase() === key) get().setView(`tag:${name}`);
+    },
+
+    async removeTag(tag) {
+      const key = tag.toLowerCase();
+      const updates = Object.values(get().tasks)
+        .filter((t) => t.categories.some((c) => c.toLowerCase() === key))
+        .map((t) => ({ id: t.id, patch: { categories: t.categories.filter((c) => c.toLowerCase() !== key) } }));
+      await get().updateTasks(updates);
+      if (tagOf(get().view)?.toLowerCase() === key) get().setView("today");
+    },
+
+    async loadSettings() {
+      try {
+        set({ settings: await api.getSettings() });
+      } catch {
+        // Older backends / browser preview without settings support.
+      }
+    },
+
+    async saveSettings({ launchAtLogin, ...patch }) {
+      const current = get().settings;
+      if (!current) return;
+      const { launchAtLogin: wasLaunching, shortcutError: _e, nativeNotifications: _n, ...settings } = current;
+      try {
+        set({ settings: await api.updateSettings({ ...settings, ...patch }, launchAtLogin ?? wasLaunching) });
+      } catch (e) {
+        fail(e);
+      }
+    },
+
+    openTask(id) {
+      const t = get().tasks[id];
+      if (!t) return;
+      const { view, lists, savedSearches } = get();
+      if (!isInView(view, t, { lists, savedSearches })) {
+        setPref("view", `list:${t.listId}`);
+        set({ view: `list:${t.listId}`, search: "" });
+      }
+      if (t.completed && !get().showCompleted) get().set({ showCompleted: true });
+      set({ selectedId: id });
     },
 
     async deleteList(id) {

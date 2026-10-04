@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  BellIcon,
   CalendarIcon,
+  CircleDashedIcon,
   CloudUploadIcon,
   CornerLeftUpIcon,
   FlagIcon,
+  HourglassIcon,
   ListTreeIcon,
   MoreHorizontalIcon,
+  PencilIcon,
   PlusIcon,
   RepeatIcon,
   Trash2Icon,
@@ -26,13 +30,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { formatTimestamp } from "@/lib/dates";
+import { toggleChecklistLine } from "@/lib/markdown";
+import { describeRule } from "@/lib/rrule";
 import { useStore } from "@/lib/store";
 import type { Task, TaskPatch } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { compareOpen } from "@/lib/views";
 import { DuePicker } from "./due-picker";
+import { Markdown } from "./markdown";
 import { PRIORITIES, PriorityFlag, priorityBorder, priorityLevel } from "./priority";
+import { ReminderPicker } from "./reminder-picker";
 import { REPEAT_OPTIONS, repeatValue } from "./repeat";
+import { RepeatEditor } from "./repeat-editor";
+import { STATUSES } from "./status";
 import { TagInput } from "./tag-input";
 
 export function TaskDetail() {
@@ -71,7 +81,10 @@ function DetailBody({ task }: { task: Task }) {
   const [title, setTitle] = useState(task.summary);
   const [notes, setNotes] = useState(task.description);
   const [subtask, setSubtask] = useState("");
+  const [repeatOpen, setRepeatOpen] = useState(false);
+  const [notesMode, setNotesMode] = useState<"view" | "edit">("view");
   const titleRef = useRef<HTMLTextAreaElement>(null);
+  const notesRef = useRef<HTMLTextAreaElement>(null);
   const editingTitle = useRef(false);
   const editingNotes = useRef(false);
   const notesTimer = useRef<number | undefined>(undefined);
@@ -225,8 +238,13 @@ function DetailBody({ task }: { task: Task }) {
             checked={task.completed}
             disabled={readOnly}
             onCheckedChange={() => void useStore.getState().toggleComplete(task.id)}
-            className={cn("mt-1 size-5 rounded-full border-[1.5px] shadow-none", priorityBorder[priorityLevel(task.priority)])}
-            aria-label="Done"
+            className={cn(
+              "mt-1 size-5 rounded-full border-[1.5px] shadow-none",
+              priorityBorder[priorityLevel(task.priority)],
+              task.status === "cancelled" &&
+                "data-[state=checked]:bg-muted-foreground data-[state=checked]:border-muted-foreground",
+            )}
+            aria-label={task.status === "cancelled" ? "Cancelled" : "Done"}
           />
           <textarea
             ref={titleRef}
@@ -263,11 +281,30 @@ function DetailBody({ task }: { task: Task }) {
           <Row icon={<CalendarIcon />}>
             <DuePicker value={task.due} completed={task.completed} showIcon={false} onChange={(due) => update({ due })} />
           </Row>
+          <Row icon={<HourglassIcon />}>
+            <DuePicker
+              value={task.start}
+              completed={task.completed}
+              showIcon={false}
+              placeholder="Add start date"
+              prefix="Starts"
+              warnOverdue={false}
+              disabled={readOnly}
+              onChange={(start) => update({ start })}
+            />
+          </Row>
+          <Row icon={<BellIcon />}>
+            <ReminderPicker task={task} readOnly={readOnly} onChange={(reminders) => update({ reminders })} />
+          </Row>
           <Row icon={<RepeatIcon />}>
             <Select
               value={repeat}
               disabled={readOnly}
               onValueChange={(v) => {
+                if (v === "edit") {
+                  setRepeatOpen(true);
+                  return;
+                }
                 const opt = REPEAT_OPTIONS.find((o) => o.value === v);
                 if (opt) update({ rrule: opt.rrule });
               }}
@@ -281,11 +318,40 @@ function DetailBody({ task }: { task: Task }) {
                     {o.label}
                   </SelectItem>
                 ))}
-                {repeat === "custom" && (
-                  <SelectItem value="custom" disabled>
-                    Custom ({task.rrule})
+                {repeat === "custom" && <SelectItem value="custom">{describeRule(task.rrule)}</SelectItem>}
+                <SelectItem value="edit">
+                  <PencilIcon /> Custom…
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <RepeatEditor
+              open={repeatOpen}
+              onOpenChange={setRepeatOpen}
+              rrule={task.rrule}
+              due={task.due ?? task.start}
+              onSave={(rrule) => update({ rrule })}
+            />
+          </Row>
+          <Row icon={<CircleDashedIcon />}>
+            <Select
+              value={task.status}
+              disabled={readOnly}
+              onValueChange={(v) => update({ status: v as Task["status"] })}
+            >
+              <SelectTrigger size="sm" className="h-8 w-full border-none px-2 shadow-none dark:bg-transparent" aria-label="Status">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {STATUSES.map((st) => (
+                  <SelectItem key={st.value} value={st.value}>
+                    {st.icon} {st.label}
+                    {task.rrule && (st.value === "completed" || st.value === "cancelled") && (
+                      <span className="text-muted-foreground text-xs">
+                        {st.value === "completed" ? "· moves to next" : "· skips this one"}
+                      </span>
+                    )}
                   </SelectItem>
-                )}
+                ))}
               </SelectContent>
             </Select>
           </Row>
@@ -316,30 +382,77 @@ function DetailBody({ task }: { task: Task }) {
         <Separator className="my-2" />
 
         <div className="px-5 py-2">
-          <Textarea
-            value={notes}
-            readOnly={readOnly}
-            placeholder="Add notes"
-            onFocus={() => (editingNotes.current = true)}
-            onChange={(e) => {
-              const v = e.target.value;
-              setNotes(v);
-              window.clearTimeout(notesTimer.current);
-              notesTimer.current = window.setTimeout(() => commitNotes(v), 800);
-            }}
-            onBlur={() => {
-              editingNotes.current = false;
-              commitNotes();
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                e.stopPropagation();
-                e.currentTarget.blur();
-              }
-            }}
-            className="min-h-24 resize-none border-none bg-transparent px-0 shadow-none focus-visible:ring-0 dark:bg-transparent"
-            aria-label="Notes"
-          />
+          {notesMode === "view" && notes.trim() ? (
+            <div
+              role="button"
+              tabIndex={readOnly ? -1 : 0}
+              aria-label="Notes (click to edit)"
+              className={cn("-mx-2 min-h-24 cursor-text rounded-md px-2 py-1.5", !readOnly && "hover:bg-accent/40")}
+              onClick={() => {
+                if (readOnly) return;
+                setNotesMode("edit");
+                requestAnimationFrame(() => {
+                  const el = notesRef.current;
+                  el?.focus();
+                  el?.setSelectionRange(el.value.length, el.value.length);
+                });
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !readOnly) {
+                  e.preventDefault();
+                  setNotesMode("edit");
+                  requestAnimationFrame(() => notesRef.current?.focus());
+                }
+              }}
+            >
+              <Markdown
+                source={notes}
+                readOnly={readOnly}
+                onToggle={(line) => {
+                  const next = toggleChecklistLine(notes, line);
+                  setNotes(next);
+                  commitNotes(next);
+                }}
+              />
+            </div>
+          ) : (
+            <>
+              <Textarea
+                ref={notesRef}
+                value={notes}
+                readOnly={readOnly}
+                placeholder="Add notes"
+                onFocus={() => {
+                  editingNotes.current = true;
+                  setNotesMode("edit");
+                }}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setNotes(v);
+                  window.clearTimeout(notesTimer.current);
+                  notesTimer.current = window.setTimeout(() => commitNotes(v), 800);
+                }}
+                onBlur={() => {
+                  editingNotes.current = false;
+                  commitNotes();
+                  setNotesMode("view");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.stopPropagation();
+                    e.currentTarget.blur();
+                  }
+                }}
+                className="min-h-24 resize-none border-none bg-transparent px-0 shadow-none focus-visible:ring-0 dark:bg-transparent"
+                aria-label="Notes"
+              />
+              {notesMode === "edit" && (
+                <p className="text-muted-foreground/80 mt-1 text-[11px]">
+                  **bold** · _italic_ · - list · - [ ] checklist · [link](https://…)
+                </p>
+              )}
+            </>
+          )}
         </div>
 
         <Separator className="my-2" />

@@ -254,6 +254,14 @@ impl Store {
         self.views.get(&key_of(id))
     }
 
+    pub fn tasks(&self) -> impl Iterator<Item = &Task> {
+        self.views.values()
+    }
+
+    pub fn task_by_uid(&self, uid: &str) -> Option<&Task> {
+        self.views.values().find(|t| t.uid == uid)
+    }
+
     fn refresh_view(&mut self, key: &str) {
         let Some(e) = self.entries.get(key) else {
             self.views.remove(key);
@@ -476,7 +484,27 @@ impl Store {
         }
         self.bump();
         let root = moved_root.ok_or_else(|| Error::NotFound("This task no longer exists".into()))?;
-        Ok(self.views[&root].clone())
+        // A subtask moved on its own becomes a top-level task over there.
+        let moved = self.views[&root].clone();
+        if let Some(parent) = &moved.parent_uid {
+            if !self.views.values().any(|t| &t.uid == parent && t.list_id == target_list) {
+                let patch = TaskPatch { parent_uid: Some(None), ..Default::default() };
+                return Ok(self.update_task(&moved.id, &patch)?.0);
+            }
+        }
+        Ok(moved)
+    }
+
+    /// Applies several edits at once (e.g. reordering a list).
+    pub fn update_tasks(&mut self, updates: &[(String, TaskPatch)]) -> Result<()> {
+        for (id, _) in updates {
+            let (_, entry) = self.live_entry(id)?;
+            self.writable_list(&entry.list_id.clone())?;
+        }
+        for (id, patch) in updates {
+            self.update_task(id, patch)?;
+        }
+        Ok(())
     }
 
     // ----------------------------------------------------------------------
@@ -830,6 +858,28 @@ mod tests {
         assert!(snap.tasks.iter().all(|t| t.list_id == "/other/"));
         s.delete_tasks(std::slice::from_ref(&moved.id)).unwrap();
         assert!(s.snapshot().tasks.is_empty());
+
+        // A subtask moved on its own loses its parent link.
+        let p = s.create_task(L, &new("parent")).unwrap();
+        let c = s.create_task(L, &NewTask { summary: "child".into(), parent_uid: Some(p.uid.clone()), ..Default::default() }).unwrap();
+        let moved = s.move_task(&c.id, "/other/").unwrap();
+        assert_eq!(moved.parent_uid, None);
+        assert_eq!(s.task(&p.id).unwrap().list_id, L);
+    }
+
+    #[test]
+    fn batch_updates() {
+        let mut s = store_with_list();
+        let a = s.create_task(L, &new("a")).unwrap();
+        let b = s.create_task(L, &new("b")).unwrap();
+        s.update_tasks(&[
+            (a.id.clone(), TaskPatch { sort_order: Some(2), ..Default::default() }),
+            (b.id.clone(), TaskPatch { sort_order: Some(1), parent_uid: Some(Some(a.uid.clone())), ..Default::default() }),
+        ])
+        .unwrap();
+        assert_eq!(s.task(&a.id).unwrap().sort_order, Some(2));
+        assert_eq!(s.task(&b.id).unwrap().parent_uid.as_deref(), Some(a.uid.as_str()));
+        assert!(s.update_tasks(&[("/nope.ics".into(), TaskPatch::default())]).is_err());
     }
 
     #[test]

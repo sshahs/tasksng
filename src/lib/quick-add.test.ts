@@ -10,9 +10,11 @@ describe("parseQuickAdd", () => {
     expect(parseQuickAdd("Buy milk", NOW)).toEqual({
       summary: "Buy milk",
       due: null,
+      start: null,
       priority: null,
       categories: [],
       rrule: null,
+      list: null,
     });
   });
 
@@ -49,6 +51,33 @@ describe("parseQuickAdd", () => {
     expect(r.rrule).toBe("FREQ=WEEKLY");
     expect(r.due).toBe("2026-10-04");
     expect(parseQuickAdd("Standup weekdays 9am", NOW).rrule).toBe("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR");
+  });
+
+  it("parses richer repeats with a matching first due date", () => {
+    const every = (s: string) => parseQuickAdd(s, NOW);
+    expect(every("Backup every 3 days").rrule).toBe("FREQ=DAILY;INTERVAL=3");
+    expect(every("Bins every other week").rrule).toBe("FREQ=WEEKLY;INTERVAL=2");
+    expect(every("Yoga every tue and thu").rrule).toBe("FREQ=WEEKLY;BYDAY=TU,TH");
+    expect(every("Yoga every tue and thu").due).toBe("2026-10-06");
+    const lastFri = every("Timesheet every last friday");
+    expect(lastFri).toMatchObject({ summary: "Timesheet", rrule: "FREQ=MONTHLY;BYDAY=-1FR", due: "2026-10-30" });
+    expect(every("Rent every 1st").rrule).toBe("FREQ=MONTHLY;BYMONTHDAY=1");
+    expect(every("Rent every 1st").due).toBe("2026-11-01");
+    expect(every("Invoice every month on the 15th").rrule).toBe("FREQ=MONTHLY;BYMONTHDAY=15");
+    expect(every("Payroll every last weekday").rrule).toBe("FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1");
+    expect(every("Payroll every last weekday").due).toBe("2026-10-30");
+    expect(every("Descale every 2 weeks after completion")).toMatchObject({
+      summary: "Descale",
+      rrule: "FREQ=WEEKLY;INTERVAL=2;FROM=COMPLETION",
+    });
+  });
+
+  it("parses start dates and lists", () => {
+    const r = parseQuickAdd("Tax return starting mon due 2026-10-31 @pers", NOW);
+    expect(r).toMatchObject({ summary: "Tax return", start: "2026-10-05", due: "2026-10-31", list: "pers" });
+    expect(parseQuickAdd("Trip from next fri", NOW).start).toBe("2026-10-09");
+    expect(parseQuickAdd("Email bob@example.com", NOW).list).toBeNull();
+    expect(parseQuickAdd("Start the project tomorrow", NOW)).toMatchObject({ summary: "Start the project", start: null, due: "2026-10-05" });
   });
 
   it("does not eat words inside other words", () => {

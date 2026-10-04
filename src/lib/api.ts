@@ -5,11 +5,14 @@ import type {
   ConnectArgs,
   DeleteResult,
   NewTask,
+  Settings,
+  SettingsView,
   Snapshot,
   SyncOutcome,
   SyncStatus,
   TaskPatch,
   TaskResult,
+  TaskUpdate,
 } from "./types";
 
 type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
@@ -61,6 +64,7 @@ export const api = {
   syncNow: () => call<SyncOutcome>("sync_now"),
   createTask: (listId: string, task: NewTask) => call<TaskResult>("create_task", { listId, task }),
   updateTask: (id: string, patch: TaskPatch) => call<TaskResult>("update_task", { id, patch }),
+  updateTasks: (updates: TaskUpdate[]) => call<Snapshot>("update_tasks", { updates }),
   moveTask: (id: string, listId: string) => call<Snapshot>("move_task", { id, listId }),
   deleteTasks: (ids: string[]) => call<DeleteResult>("delete_tasks", { ids }),
   undoDelete: (token: number) => call<Snapshot>("undo_delete", { token }),
@@ -70,14 +74,41 @@ export const api = {
   deleteList: (id: string) => call<Snapshot>("delete_list", { id }),
   prepareForUpdate: () => call<void>("prepare_for_update"),
   updatesSupported: () => call<boolean>("updates_supported"),
+  getSettings: () => call<SettingsView>("get_settings"),
+  updateSettings: (settings: Settings, launchAtLogin: boolean) =>
+    call<SettingsView>("update_settings", { settings, launchAtLogin }),
+  suspendShortcut: (suspend: boolean) => call<void>("suspend_shortcut", { suspend }),
+  openLink: (url: string) => call<void>("open_link", { url }),
+  reminderAction: (uid: string, action: "done" | "snooze" | "open", minutes?: number) =>
+    call<void>("reminder_action", { uid, action, minutes }),
+  testNotification: () => call<void>("test_notification"),
+  hideQuickAdd: () => call<void>("hide_quick_add"),
 };
 
-export async function showWindow() {
+/**
+ * Tells the backend the page has painted, which then shows the window.
+ * Hidden windows don't get animation frames, so a timer backs that up.
+ */
+export function windowReady() {
   if (!isTauri) return;
-  const { getCurrentWindow } = await import("@tauri-apps/api/window");
-  const w = getCurrentWindow();
-  await w.show();
-  await w.setFocus();
+  let sent = false;
+  const send = () => {
+    if (sent) return;
+    sent = true;
+    void call<void>("window_ready").catch(() => undefined);
+  };
+  requestAnimationFrame(send);
+  window.setTimeout(send, 60);
+}
+
+/** Which window this page runs in ("main" or "quick-add"). */
+export function windowLabel(): string {
+  if (isTauri) {
+    const internals = (window as unknown as { __TAURI_INTERNALS__?: { metadata?: { currentWindow?: { label?: string } } } })
+      .__TAURI_INTERNALS__;
+    return internals?.metadata?.currentWindow?.label ?? "main";
+  }
+  return new URLSearchParams(location.search).get("window") ?? "main";
 }
 
 export async function appVersion(): Promise<string> {

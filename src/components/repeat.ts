@@ -1,3 +1,5 @@
+import { describeRule } from "@/lib/rrule";
+
 export const REPEAT_OPTIONS = [
   { value: "none", label: "Does not repeat", rrule: null },
   { value: "daily", label: "Every day", rrule: "FREQ=DAILY" },
@@ -17,5 +19,5 @@ export function repeatValue(rrule: string | null): string {
 export function repeatLabel(rrule: string | null): string | null {
   if (!rrule) return null;
   const v = repeatValue(rrule);
-  return v === "custom" ? "Custom repeat" : (REPEAT_OPTIONS.find((o) => o.value === v)?.label ?? null);
+  return v === "custom" ? describeRule(rrule) : (REPEAT_OPTIONS.find((o) => o.value === v)?.label ?? null);
 }

@@ -1,21 +1,31 @@
 //! Tauri shell: exposes the task store to the UI and runs synchronisation in
 //! the background so every UI action completes instantly.
 
+mod notify;
+mod quick_add;
 mod secrets;
+mod settings;
+mod tray;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
+use notify::{Toast, ToastAction};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
+use tasks_core::alarms::{Alarms, DueReminder};
 use tasks_core::dav::{normalize_url, Credentials, DavClient};
-use tasks_core::model::{NewTask, PatchOutcome, Task, TaskPatch};
+use tasks_core::model::{NewTask, PatchOutcome, Task, TaskPatch, TaskStatus};
 use tasks_core::store::{write_atomic, Account, Snapshot, Store, TaskList};
 use tasks_core::sync::{self, SyncReport};
 use tasks_core::Error;
-use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
+use tauri_plugin_autostart::ManagerExt as _;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_opener::OpenerExt;
 
 struct Connection {
     client: DavClient,
@@ -32,7 +42,7 @@ struct SyncStatus {
     pending: usize,
 }
 
-struct AppState {
+pub(crate) struct AppState {
     data_dir: PathBuf,
     store: Arc<Mutex<Store>>,
     conn: RwLock<Option<Arc<Connection>>>,
@@ -41,11 +51,23 @@ struct AppState {
     push_pending: AtomicBool,
     save_pending: AtomicBool,
     status: Mutex<SyncStatus>,
+    settings_path: PathBuf,
+    settings: Mutex<Settings>,
+    shortcut_error: Mutex<Option<String>>,
+    alarms: Alarms,
+    /// Started with Windows (`--hidden`): stay in the notification area.
+    start_hidden: bool,
+    pub(crate) quick_add_pending: AtomicBool,
+    pub(crate) quick_add_loaded: AtomicBool,
 }
 
 impl AppState {
     fn store(&self) -> MutexGuard<'_, Store> {
         self.store.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn settings(&self) -> Settings {
+        self.settings.lock().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
     fn connection(&self) -> Option<Arc<Connection>> {
@@ -146,7 +168,7 @@ fn after_local_change(app: &AppHandle) {
     set_status(app, current.state, current.message);
 }
 
-async fn run_sync(app: &AppHandle, state: &AppState) -> Result<Vec<String>, Error> {
+pub(crate) async fn run_sync(app: &AppHandle, state: &AppState) -> Result<Vec<String>, Error> {
     let Some(conn) = state.connection() else {
         let signed_in = state.store().account().is_some();
         let (s, msg) = if signed_in {
@@ -273,13 +295,23 @@ struct TaskResult {
 }
 
 #[tauri::command(async)]
-fn create_task(app: AppHandle, state: State<'_, AppState>, list_id: String, task: NewTask) -> Result<TaskResult, String> {
+fn create_task(
+    app: AppHandle,
+    window: tauri::Window,
+    state: State<'_, AppState>,
+    list_id: String,
+    task: NewTask,
+) -> Result<TaskResult, String> {
     let result = {
         let mut store = state.store();
         let task = store.create_task(&list_id, &task).map_err(err)?;
         TaskResult { task, revision: store.revision(), advanced_to: None }
     };
     after_local_change(&app);
+    // Added from the quick add window: the main window has to hear about it.
+    if window.label() != "main" {
+        emit_snapshot(&app);
+    }
     Ok(result)
 }
 
@@ -296,6 +328,25 @@ fn update_task(app: AppHandle, state: State<'_, AppState>, id: String, patch: Ta
     };
     after_local_change(&app);
     Ok(result)
+}
+
+#[derive(Debug, Deserialize)]
+struct TaskUpdate {
+    id: String,
+    patch: TaskPatch,
+}
+
+/// Several edits at once, e.g. after reordering by drag and drop.
+#[tauri::command(async)]
+fn update_tasks(app: AppHandle, state: State<'_, AppState>, updates: Vec<TaskUpdate>) -> Result<Snapshot, String> {
+    let snapshot = {
+        let mut store = state.store();
+        let updates: Vec<(String, TaskPatch)> = updates.into_iter().map(|u| (u.id, u.patch)).collect();
+        store.update_tasks(&updates).map_err(err)?;
+        store.snapshot()
+    };
+    after_local_change(&app);
+    Ok(snapshot)
 }
 
 #[tauri::command(async)]
@@ -437,9 +488,241 @@ fn updates_supported() -> bool {
     }
 }
 
+/// The main window's page has painted; show it unless TasksNG was started
+/// with Windows into the notification area.
+#[tauri::command]
+fn window_ready(app: AppHandle, window: tauri::Window, state: State<'_, AppState>) {
+    match window.label() {
+        "main" if !state.start_hidden => show_main_window(&app),
+        quick_add::LABEL => quick_add::ready(&app),
+        _ => {}
+    }
+}
+
+#[tauri::command]
+fn hide_quick_add(app: AppHandle) {
+    quick_add::hide(&app);
+}
+
+// ---------------------------------------------------------------------------
+// Settings
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SettingsView {
+    #[serde(flatten)]
+    settings: Settings,
+    launch_at_login: bool,
+    shortcut_error: Option<String>,
+    /// Reminders appear as Windows notifications (false in development
+    /// builds on other systems, where they show inside the app).
+    native_notifications: bool,
+}
+
+fn settings_view(app: &AppHandle) -> SettingsView {
+    let state = app.state::<AppState>();
+    let shortcut_error = state.shortcut_error.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    SettingsView {
+        settings: state.settings(),
+        launch_at_login: app.autolaunch().is_enabled().unwrap_or(false),
+        shortcut_error,
+        native_notifications: cfg!(windows),
+    }
+}
+
+/// Registers the quick add shortcut; returns a message if that failed.
+fn apply_shortcut(app: &AppHandle, shortcut: Option<&str>) -> Option<String> {
+    let gs = app.global_shortcut();
+    let _ = gs.unregister_all();
+    let shortcut = shortcut.map(str::trim).filter(|s| !s.is_empty())?;
+    match gs.register(shortcut) {
+        Ok(()) => None,
+        Err(e) => {
+            log::warn!("registering {shortcut} failed: {e}");
+            Some(format!(
+                "{} is already used by Windows or another app. Pick a different shortcut.",
+                shortcut.replace("Super", "Win")
+            ))
+        }
+    }
+}
+
+#[tauri::command]
+fn get_settings(app: AppHandle) -> SettingsView {
+    settings_view(&app)
+}
+
+#[tauri::command]
+fn update_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    settings: Settings,
+    launch_at_login: bool,
+) -> Result<SettingsView, String> {
+    let old = state.settings();
+    if old.quick_add_shortcut != settings.quick_add_shortcut {
+        let error = apply_shortcut(&app, settings.quick_add_shortcut.as_deref());
+        *state.shortcut_error.lock().unwrap_or_else(|p| p.into_inner()) = error;
+        if settings.quick_add_shortcut.is_some() {
+            quick_add::prepare(&app);
+        }
+    }
+    if settings.reminders && !old.reminders {
+        state.alarms.restart();
+    }
+    let autolaunch = app.autolaunch();
+    if autolaunch.is_enabled().unwrap_or(false) != launch_at_login {
+        let res = if launch_at_login { autolaunch.enable() } else { autolaunch.disable() };
+        res.map_err(|e| format!("Couldn't change the start-up setting: {e}"))?;
+    }
+    settings::save(&state.settings_path, &settings);
+    *state.settings.lock().unwrap_or_else(|p| p.into_inner()) = settings;
+    Ok(settings_view(&app))
+}
+
+/// Pauses the global shortcut while a new one is being recorded in
+/// Settings (otherwise pressing the current one would open quick add).
+#[tauri::command]
+fn suspend_shortcut(app: AppHandle, state: State<'_, AppState>, suspend: bool) {
+    if suspend {
+        let _ = app.global_shortcut().unregister_all();
+    } else {
+        let error = apply_shortcut(&app, state.settings().quick_add_shortcut.as_deref());
+        *state.shortcut_error.lock().unwrap_or_else(|p| p.into_inner()) = error;
+    }
+}
+
+/// Opens a link from a task's notes in the default browser or mail app.
+#[tauri::command]
+fn open_link(app: AppHandle, url: String) -> Result<(), String> {
+    let parsed = Url::parse(url.trim()).map_err(|_| "That isn't a valid link".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https" | "mailto") {
+        return Err("Only web and e-mail links can be opened".into());
+    }
+    app.opener().open_url(parsed.as_str(), None::<&str>).map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Reminders
+
+fn app_id(app: &AppHandle) -> String {
+    app.config().identifier.clone()
+}
+
+fn toast_handler(app: &AppHandle) -> notify::Handler {
+    let app = app.clone();
+    Arc::new(move |action| handle_toast_action(&app, action))
+}
+
+fn handle_toast_action(app: &AppHandle, action: ToastAction) {
+    let state = app.state::<AppState>();
+    match action {
+        ToastAction::Open(uid) => {
+            show_main_window(app);
+            if let Some(id) = uid.and_then(|u| state.store().task_by_uid(&u).map(|t| t.id.clone())) {
+                let _ = app.emit_to("main", "open-task", id);
+            }
+        }
+        ToastAction::Done(uid) => {
+            let id = state.store().task_by_uid(&uid).filter(|t| !t.completed).map(|t| t.id.clone());
+            if let Some(id) = id {
+                let patch = TaskPatch { status: Some(TaskStatus::Completed), ..Default::default() };
+                let res = state.store().update_task(&id, &patch);
+                match res {
+                    Ok(_) => {
+                        after_local_change(app);
+                        emit_snapshot(app);
+                    }
+                    Err(e) => log::warn!("completing from a reminder failed: {e}"),
+                }
+            }
+        }
+        ToastAction::Snooze(uid, minutes) => state.alarms.snooze(&uid, minutes),
+    }
+}
+
+/// Shows due reminders as notifications (or inside the app when that is
+/// not possible).
+fn show_reminders(app: &AppHandle, due: Vec<DueReminder>) {
+    let toasts: Vec<Toast> = if due.len() > 3 {
+        let mut names: Vec<&str> = due.iter().take(3).map(|d| d.title.as_str()).collect();
+        if due.len() > 3 {
+            names.push("…");
+        }
+        vec![Toast {
+            title: format!("{} reminders", due.len()),
+            body: names.join(", "),
+            reminder_uid: None,
+            open_uid: None,
+        }]
+    } else {
+        due.iter()
+            .map(|d| Toast {
+                title: d.title.clone(),
+                body: d.body.clone(),
+                reminder_uid: Some(d.uid.clone()),
+                open_uid: Some(d.uid.clone()),
+            })
+            .collect()
+    };
+    let handle = app.clone();
+    let res = app.run_on_main_thread(move || {
+        let id = app_id(&handle);
+        let failed = toasts.iter().any(|t| {
+            notify::show(&id, t, toast_handler(&handle))
+                .inspect_err(|e| log::info!("notification not shown: {e}"))
+                .is_err()
+        });
+        if failed {
+            let _ = handle.emit_to("main", "reminders", &due);
+        }
+    });
+    if let Err(e) = res {
+        log::warn!("showing reminders failed: {e}");
+    }
+}
+
+fn check_reminders(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let settings = state.settings();
+    if !settings.reminders {
+        return;
+    }
+    let due = {
+        let store = state.store();
+        state.alarms.collect(store.tasks(), store.lists(), settings.default_reminder, chrono::Utc::now())
+    };
+    if !due.is_empty() {
+        show_reminders(app, due);
+    }
+}
+
+/// Snooze or complete from the in-app reminder message.
+#[tauri::command]
+fn reminder_action(app: AppHandle, uid: String, action: String, minutes: Option<u32>) {
+    let action = match action.as_str() {
+        "done" => ToastAction::Done(uid),
+        "snooze" => ToastAction::Snooze(uid, minutes.unwrap_or(notify::DEFAULT_SNOOZE)),
+        _ => ToastAction::Open(Some(uid)),
+    };
+    handle_toast_action(&app, action);
+}
+
+/// Shows a sample reminder so people can check notifications are allowed.
+#[tauri::command]
+fn test_notification(app: AppHandle) -> Result<(), String> {
+    let toast = Toast {
+        title: "This is how reminders look".into(),
+        body: "Snooze or complete tasks right from the notification.".into(),
+        reminder_uid: Some(String::new()),
+        open_uid: None,
+    };
+    notify::show(&app_id(&app), &toast, toast_handler(&app))
+}
+
 // ---------------------------------------------------------------------------
 
-fn show_main_window(app: &AppHandle) {
+pub(crate) fn show_main_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
@@ -447,10 +730,52 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
+/// Closing the main window hides it to the notification area (once with a
+/// hint), unless that is turned off.
+fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
+    let app = window.app_handle();
+    match (window.label(), event) {
+        ("main", WindowEvent::CloseRequested { api, .. }) => {
+            let state = app.state::<AppState>();
+            let mut settings = state.settings();
+            if !settings.close_to_tray {
+                app.exit(0);
+                return;
+            }
+            api.prevent_close();
+            let _ = window.hide();
+            if !settings.tray_hint_shown {
+                settings.tray_hint_shown = true;
+                settings::save(&state.settings_path, &settings);
+                *state.settings.lock().unwrap_or_else(|p| p.into_inner()) = settings;
+                let toast = Toast {
+                    title: "TasksNG is still running".into(),
+                    body: "It stays in the notification area so reminders can appear. Right-click its icon to quit, or change this in Settings."
+                        .into(),
+                    reminder_uid: None,
+                    open_uid: None,
+                };
+                let _ = notify::show(&app_id(app), &toast, toast_handler(app));
+            }
+        }
+        (quick_add::LABEL, WindowEvent::Focused(false)) => quick_add::hide(app),
+        (quick_add::LABEL, WindowEvent::CloseRequested { api, .. }) => {
+            api.prevent_close();
+            quick_add::hide(app);
+        }
+        _ => {}
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main_window(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // A second "start with Windows" launch shouldn't pop the window up.
+            if !args.iter().any(|a| a == "--hidden") {
+                show_main_window(app);
+            }
+        }))
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
@@ -461,6 +786,17 @@ pub fn run() {
         )
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::Builder::new().args(["--hidden"]).build())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == ShortcutState::Pressed {
+                        quick_add::toggle(app);
+                    }
+                })
+                .build(),
+        )
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(
@@ -468,9 +804,12 @@ pub fn run() {
                 )
                 .build(),
         )
+        .on_window_event(on_window_event)
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let store = Store::open(&data_dir.join("tasks-cache.json"));
+            let settings_path = data_dir.join("settings.json");
+            let settings = settings::load(&settings_path);
             let mut status = SyncStatus { state: "signed-out", message: None, last_sync: None, pending: 0 };
             let mut conn = None;
             if let Some(account) = store.account() {
@@ -497,7 +836,11 @@ pub fn run() {
                     }
                 }
             }
+            let start_hidden = std::env::args().any(|a| a == "--hidden");
+            let shortcut = settings.quick_add_shortcut.clone();
+            notify::register(&app.config().identifier, &data_dir);
             app.manage(AppState {
+                alarms: Alarms::open(&data_dir.join("reminders.json")),
                 data_dir,
                 store: Arc::new(Mutex::new(store)),
                 conn: RwLock::new(conn),
@@ -506,17 +849,43 @@ pub fn run() {
                 push_pending: AtomicBool::new(false),
                 save_pending: AtomicBool::new(false),
                 status: Mutex::new(status),
+                settings_path,
+                settings: Mutex::new(settings),
+                shortcut_error: Mutex::new(None),
+                start_hidden,
+                quick_add_pending: AtomicBool::new(false),
+                quick_add_loaded: AtomicBool::new(false),
             });
 
-            // The UI shows the window once it has painted; this is a safety
-            // net in case the web view fails to load.
             let handle = app.handle().clone();
+            if let Err(e) = tray::create(&handle) {
+                log::error!("creating the tray icon failed: {e}");
+            }
+            let error = apply_shortcut(&handle, shortcut.as_deref());
+            *app.state::<AppState>().shortcut_error.lock().unwrap_or_else(|p| p.into_inner()) = error;
+
             tauri::async_runtime::spawn(async move {
+                // The UI shows the window once it has painted; this is a
+                // safety net in case the web view fails to load.
                 tokio::time::sleep(Duration::from_secs(3)).await;
-                if let Some(w) = handle.get_webview_window("main") {
-                    if !w.is_visible().unwrap_or(true) {
-                        let _ = w.show();
+                if !handle.state::<AppState>().start_hidden {
+                    if let Some(w) = handle.get_webview_window("main") {
+                        if !w.is_visible().unwrap_or(true) {
+                            let _ = w.show();
+                        }
                     }
+                }
+                // Load the quick add window in the background so the
+                // shortcut opens it instantly.
+                if handle.state::<AppState>().settings().quick_add_shortcut.is_some() {
+                    let h = handle.clone();
+                    let _ = handle.run_on_main_thread(move || {
+                        quick_add::prepare(&h);
+                    });
+                }
+                loop {
+                    check_reminders(&handle);
+                    tokio::time::sleep(Duration::from_secs(10)).await;
                 }
             });
             Ok(())
@@ -537,6 +906,15 @@ pub fn run() {
             delete_list,
             prepare_for_update,
             updates_supported,
+            update_tasks,
+            window_ready,
+            hide_quick_add,
+            get_settings,
+            update_settings,
+            suspend_shortcut,
+            open_link,
+            reminder_action,
+            test_notification,
         ])
         .build(tauri::generate_context!())
         .expect("error while building TasksNG");

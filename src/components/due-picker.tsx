@@ -23,17 +23,26 @@ export function DuePicker({
   completed,
   showIcon = true,
   className,
+  placeholder = "Add due date",
+  prefix = "",
+  warnOverdue = true,
+  disabled,
 }: {
   value: string | null;
   onChange: (due: string | null) => void;
   completed?: boolean;
   showIcon?: boolean;
   className?: string;
+  placeholder?: string;
+  /** Text in front of the date, e.g. "Starts". */
+  prefix?: string;
+  warnOverdue?: boolean;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const info = parseDue(value);
   const time = dueTime(info);
-  const overdue = !completed && isOverdue(info);
+  const overdue = warnOverdue && !completed && isOverdue(info);
 
   const pick = (day: Date | undefined, t: string | null = time) => {
     if (!day) return;
@@ -47,6 +56,7 @@ export function DuePicker({
           <Button
             variant="ghost"
             size="sm"
+            disabled={disabled}
             className={cn(
               "h-8 flex-1 justify-start px-2 font-normal",
               !info && "text-muted-foreground",
@@ -54,16 +64,16 @@ export function DuePicker({
             )}
           >
             {showIcon && <CalendarIcon />}
-            {info ? formatDue(info) : "Add due date"}
+            {info ? `${prefix ? `${prefix} ` : ""}${formatDue(info)}` : placeholder}
           </Button>
         </PopoverTrigger>
-        {info && (
+        {info && !disabled && (
           <Button
             variant="ghost"
             size="icon-sm"
             className="text-muted-foreground size-7"
             onClick={() => onChange(null)}
-            aria-label="Remove due date"
+            aria-label={`Remove ${placeholder.replace(/^Add /, "")}`}
           >
             <XIcon className="size-3.5" />
           </Button>

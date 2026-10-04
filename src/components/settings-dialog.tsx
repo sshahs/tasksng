@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { DownloadIcon, Loader2Icon, LogOutIcon, MonitorIcon, MoonIcon, RefreshCwIcon, SunIcon } from "lucide-react";
+import { BellRingIcon, DownloadIcon, Loader2Icon, LogOutIcon, MonitorIcon, MoonIcon, RefreshCwIcon, SunIcon } from "lucide-react";
+import { toast } from "sonner";
 
 import {
   AlertDialog,
@@ -19,13 +20,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { useTheme, type Theme } from "@/hooks/use-theme";
-import { appVersion } from "@/lib/api";
+import { api, appVersion, isTauri } from "@/lib/api";
 import { relativeTime } from "@/lib/dates";
 import { getPref, setPref } from "@/lib/prefs";
+import { DEFAULT_REMINDERS } from "@/lib/reminders";
 import { useStore } from "@/lib/store";
 import { useUpdates } from "@/lib/updater";
 import { cn } from "@/lib/utils";
 import { ConnectForm } from "./connect-form";
+import { ShortcutRecorder } from "./shortcut-recorder";
 
 export const SYNC_INTERVALS = [
   { value: "1", label: "Every minute" },
@@ -37,10 +40,14 @@ export const SYNC_INTERVALS = [
 
 export const SHORTCUTS: [string, string][] = [
   ["N", "New task"],
+  ["Win Alt N", "Quick add anywhere"],
   ["Ctrl K", "Command palette / jump to task"],
   ["Ctrl F", "Search"],
   ["↑ ↓", "Move selection"],
   ["Space", "Complete / reopen"],
+  ["I", "In progress"],
+  ["Alt ↑ ↓", "Move up / down"],
+  ["Alt → ←", "Indent / outdent"],
   ["Enter", "Edit title"],
   ["1 2 3 0", "Set priority"],
   ["T / M", "Due today / tomorrow"],
@@ -184,6 +191,10 @@ export function SettingsDialog() {
 
           <Separator />
 
+          <BackgroundSection />
+
+          <Separator />
+
           <UpdatesSection version={version} />
 
           <Separator />
@@ -194,7 +205,7 @@ export function SettingsDialog() {
               {SHORTCUTS.map(([k, label]) => (
                 <div key={k} className="flex items-center justify-between gap-2">
                   <span className="text-muted-foreground truncate">{label}</span>
-                  <Kbd>{k}</Kbd>
+                  <Kbd className="shrink-0 whitespace-nowrap">{k}</Kbd>
                 </div>
               ))}
             </div>
@@ -227,6 +238,120 @@ export function SettingsDialog() {
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+function SettingRow({
+  id,
+  label,
+  hint,
+  checked,
+  onChange,
+  disabled,
+}: {
+  id: string;
+  label: string;
+  hint?: string;
+  checked: boolean;
+  onChange: (on: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onChange} className="mt-0.5" />
+      <div className="grid gap-0.5">
+        <Label htmlFor={id} className="font-normal">
+          {label}
+        </Label>
+        {hint && <p className="text-muted-foreground text-xs">{hint}</p>}
+      </div>
+    </div>
+  );
+}
+
+/** Reminders, running in the notification area, start-up and quick add. */
+function BackgroundSection() {
+  const settings = useStore((s) => s.settings);
+  if (!settings) return null;
+  const save = (patch: Parameters<ReturnType<typeof useStore.getState>["saveSettings"]>[0]) => void useStore.getState().saveSettings(patch);
+  const defaultValue = DEFAULT_REMINDERS.find((d) => d.offset === settings.defaultReminder)?.value ?? "off";
+
+  return (
+    <section className="grid gap-4">
+      <h3 className="text-sm font-medium">Reminders &amp; background</h3>
+      <SettingRow
+        id="reminders"
+        label="Show reminders"
+        hint={settings.nativeNotifications ? "As Windows notifications with Snooze and Done buttons." : "Inside the app (Windows notifications need the desktop app on Windows)."}
+        checked={settings.reminders}
+        onChange={(reminders) => save({ reminders })}
+      />
+      <div className="flex items-center justify-between gap-4 pl-12">
+        <Label className="text-muted-foreground font-normal" title="For tasks with a due time and no reminder of their own">
+          Automatic reminder
+        </Label>
+        <Select
+          value={defaultValue}
+          disabled={!settings.reminders}
+          onValueChange={(v) => save({ defaultReminder: DEFAULT_REMINDERS.find((d) => d.value === v)?.offset ?? null })}
+        >
+          <SelectTrigger className="w-48">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {DEFAULT_REMINDERS.map((d) => (
+              <SelectItem key={d.value} value={d.value}>
+                {d.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      {settings.nativeNotifications && (
+        <div className="pl-12">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!settings.reminders}
+            onClick={() =>
+              void api.testNotification().catch((e) => toast.error(`Couldn't show a notification: ${e instanceof Error ? e.message : e}`))
+            }
+          >
+            <BellRingIcon /> Send a test notification
+          </Button>
+        </div>
+      )}
+      <SettingRow
+        id="close-to-tray"
+        label="Keep running in the notification area when closed"
+        hint="Reminders and quick add keep working. Quit from the TasksNG icon next to the clock."
+        checked={settings.closeToTray}
+        onChange={(closeToTray) => save({ closeToTray })}
+      />
+      <SettingRow
+        id="autostart"
+        label="Start TasksNG when you sign in to Windows"
+        hint="Starts quietly in the notification area."
+        checked={settings.launchAtLogin}
+        disabled={!isTauri}
+        onChange={(launchAtLogin) => save({ launchAtLogin })}
+      />
+      <div className="grid gap-2">
+        <SettingRow
+          id="quick-add-shortcut"
+          label="Quick add from anywhere"
+          hint="Opens a small box for a new task on top of whatever you're doing."
+          checked={settings.quickAddShortcut !== null}
+          onChange={(on) => save({ quickAddShortcut: on ? "Super+Alt+N" : null })}
+        />
+        {settings.quickAddShortcut !== null && (
+          <div className="flex items-center gap-3 pl-12">
+            <ShortcutRecorder value={settings.quickAddShortcut} onChange={(quickAddShortcut) => save({ quickAddShortcut })} />
+          </div>
+        )}
+        {settings.shortcutError && <p className="text-destructive pl-12 text-xs">{settings.shortcutError}</p>}
+      </div>
+    </section>
   );
 }
 

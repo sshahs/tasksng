@@ -4,7 +4,7 @@
  */
 import { addDays, format } from "date-fns";
 
-import type { NewTask, Snapshot, SyncStatus, Task, TaskList, TaskPatch } from "./types";
+import type { NewTask, Settings, SettingsView, Snapshot, SyncStatus, Task, TaskList, TaskPatch, TaskUpdate } from "./types";
 
 type Handler = (payload: never) => void;
 
@@ -43,6 +43,7 @@ export function createMockBackend() {
       created: new Date(Date.now() - (100 - n) * 60000).toISOString(),
       modified: null,
       sortOrder: null,
+      reminders: [],
       pending: false,
       ...p,
     };
@@ -50,14 +51,21 @@ export function createMockBackend() {
   const launch = mk(W, { summary: "Prepare Q4 product launch", priority: 1, due: day(2), categories: ["launch"] });
   let tasks: Task[] = [
     mk(P, { summary: "Renew car insurance", due: day(-2), priority: 1, categories: ["admin"] }),
-    mk(P, { summary: "Call grandma", due: day(0), description: "Ask about the recipe for plum cake" }),
+    mk(P, {
+      summary: "Call grandma",
+      due: `${day(0)}T18:00:00`,
+      description: "Ask about the recipe for **plum cake** 🍰\n\n- [x] Find her new number\n- [ ] Ask about Sunday\n\nRecipe ideas: https://www.bbc.co.uk/food",
+      reminders: [{ offset: -900, related: "due" }],
+    }),
     mk(P, { summary: "Water the plants", due: day(0), rrule: "FREQ=WEEKLY", categories: ["home"] }),
     mk(P, { summary: "Book dentist appointment", due: day(5) }),
+    mk(P, { summary: "Plan winter holiday", start: day(3), categories: ["travel"] }),
     mk(P, { summary: "Read “The Pragmatic Programmer”", categories: ["books"] }),
     launch,
     mk(W, { summary: "Draft announcement blog post", parentUid: launch.uid, due: day(1) }),
     mk(W, { summary: "Review pricing page copy", parentUid: launch.uid, completed: true, status: "completed", completedAt: new Date().toISOString() }),
-    mk(W, { summary: "Schedule press briefing", parentUid: launch.uid, priority: 5 }),
+    mk(W, { summary: "Schedule press briefing", parentUid: launch.uid, priority: 5, status: "in-process" }),
+    mk(W, { summary: "Submit timesheet", due: day(3), rrule: "FREQ=MONTHLY;BYDAY=-1FR", categories: ["admin"] }),
     mk(W, { summary: "Weekly 1:1 notes", due: `${day(0)}T14:30:00`, rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR" }),
     mk(W, { summary: "Expense report for September", due: day(-1), priority: 5 }),
     mk(W, { summary: "Clean up CI pipeline", priority: 9, categories: ["eng"] }),
@@ -69,6 +77,15 @@ export function createMockBackend() {
   const trash = new Map<number, Task[]>();
   let token = 0;
   let lastSync: string | null = new Date().toISOString();
+  let settings: Settings = {
+    closeToTray: true,
+    reminders: true,
+    defaultReminder: 0,
+    quickAddShortcut: "Super+Alt+N",
+    trayHintShown: false,
+  };
+  let launchAtLogin = false;
+  const settingsView = (): SettingsView => ({ ...settings, launchAtLogin, shortcutError: null, nativeNotifications: false });
   let status: SyncStatus = { state: "idle", message: null, lastSync, pending: 0 };
 
   const account = () =>
@@ -93,6 +110,38 @@ export function createMockBackend() {
   const descendants = (t: Task): Task[] => {
     const kids = tasks.filter((k) => k.parentUid === t.uid && k.listId === t.listId);
     return [t, ...kids.flatMap(descendants)];
+  };
+
+  const applyPatch = (t: Task, p: TaskPatch): { next: Task; advancedTo: string | null } => {
+    const next: Task = { ...t, modified: new Date().toISOString() };
+    if (p.summary !== undefined) next.summary = p.summary;
+    if (p.description !== undefined) next.description = p.description ?? "";
+    if (p.priority !== undefined) next.priority = p.priority;
+    if (p.due !== undefined) next.due = p.due;
+    if (p.start !== undefined) next.start = p.start;
+    if (p.categories !== undefined) next.categories = p.categories;
+    if (p.parentUid !== undefined) next.parentUid = p.parentUid;
+    if (p.sortOrder !== undefined) next.sortOrder = p.sortOrder;
+    if (p.reminders !== undefined) next.reminders = p.reminders;
+    if (p.rrule !== undefined) {
+      next.rrule = p.rrule;
+      if (p.rrule && !next.due) next.due = day(0);
+    }
+    let advancedTo: string | null = null;
+    if (p.status !== undefined) {
+      if ((p.status === "completed" || p.status === "cancelled") && next.rrule && next.due) {
+        const d = next.due.length === 10 ? next.due : next.due.slice(0, 10);
+        const step = next.rrule.includes("DAILY") || next.rrule.includes("BYDAY") ? 1 : next.rrule.includes("MONTHLY") ? 30 : 7;
+        next.due = format(addDays(new Date(d), step), "yyyy-MM-dd");
+        next.status = "needs-action";
+        advancedTo = next.due;
+      } else {
+        next.status = p.status;
+        next.completed = p.status === "completed" || p.status === "cancelled";
+        next.completedAt = next.completed ? new Date().toISOString() : null;
+      }
+    }
+    return { next, advancedTo };
   };
 
   const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
@@ -127,9 +176,12 @@ export function createMockBackend() {
         description: input.description ?? "",
         priority: input.priority ?? 0,
         due: input.due ?? null,
+        start: input.start ?? null,
         categories: input.categories ?? [],
         parentUid: input.parentUid ?? null,
         rrule: input.rrule ?? null,
+        reminders: input.reminders ?? [],
+        sortOrder: input.sortOrder ?? null,
       });
       tasks = [...tasks, t];
       bump();
@@ -137,40 +189,29 @@ export function createMockBackend() {
     },
     update_task: (a) => {
       const t = find(a.id as string);
-      const p = a.patch as TaskPatch;
-      const next: Task = { ...t, modified: new Date().toISOString() };
-      if (p.summary !== undefined) next.summary = p.summary;
-      if (p.description !== undefined) next.description = p.description ?? "";
-      if (p.priority !== undefined) next.priority = p.priority;
-      if (p.due !== undefined) next.due = p.due;
-      if (p.categories !== undefined) next.categories = p.categories;
-      if (p.parentUid !== undefined) next.parentUid = p.parentUid;
-      if (p.rrule !== undefined) {
-        next.rrule = p.rrule;
-        if (p.rrule && !next.due) next.due = day(0);
-      }
-      let advancedTo: string | null = null;
-      if (p.status !== undefined) {
-        if (p.status === "completed" && next.rrule && next.due) {
-          const d = next.due.length === 10 ? next.due : next.due.slice(0, 10);
-          const step = next.rrule.includes("DAILY") || next.rrule.includes("BYDAY") ? 1 : next.rrule.includes("MONTHLY") ? 30 : 7;
-          next.due = format(addDays(new Date(d), step), "yyyy-MM-dd");
-          advancedTo = next.due;
-        } else {
-          next.status = p.status;
-          next.completed = p.status === "completed" || p.status === "cancelled";
-          next.completedAt = next.completed ? new Date().toISOString() : null;
-        }
-      }
+      const { next, advancedTo } = applyPatch(t, a.patch as TaskPatch);
       tasks = tasks.map((x) => (x.id === t.id ? next : x));
       bump();
       return { task: next, revision, advancedTo };
+    },
+    update_tasks: (a) => {
+      for (const u of a.updates as TaskUpdate[]) {
+        const t = find(u.id);
+        const { next } = applyPatch(t, u.patch);
+        tasks = tasks.map((x) => (x.id === t.id ? next : x));
+      }
+      bump();
+      return snapshot();
     },
     move_task: (a) => {
       const t = find(a.id as string);
       const target = a.listId as string;
       const moving = new Set(descendants(t).map((x) => x.id));
-      tasks = tasks.map((x) => (moving.has(x.id) ? { ...x, listId: target, id: `${target}${x.uid}.ics` } : x));
+      tasks = tasks.map((x) =>
+        moving.has(x.id)
+          ? { ...x, listId: target, id: `${target}${x.uid}.ics`, parentUid: x.id === t.id ? null : x.parentUid }
+          : x,
+      );
       bump();
       return snapshot();
     },
@@ -205,6 +246,23 @@ export function createMockBackend() {
       bump();
       return snapshot();
     },
+    get_settings: () => settingsView(),
+    update_settings: (a) => {
+      settings = a.settings as Settings;
+      launchAtLogin = !!a.launchAtLogin;
+      return settingsView();
+    },
+    suspend_shortcut: () => null,
+    open_link: (a) => {
+      window.open(String(a.url), "_blank", "noopener");
+      return null;
+    },
+    reminder_action: () => null,
+    test_notification: () => {
+      throw "Windows notifications are only available in the desktop app";
+    },
+    hide_quick_add: () => null,
+    window_ready: () => null,
     delete_list: async (a) => {
       await sleep(200);
       const i = lists.findIndex((x) => x.id === a.id);

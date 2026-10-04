@@ -3,6 +3,7 @@ import { KeyRoundIcon } from "lucide-react";
 
 import { CommandPalette } from "@/components/command-palette";
 import { ListDialog } from "@/components/list-dialog";
+import { SearchDialog, TagDialog } from "@/components/search-dialog";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { SetupScreen } from "@/components/setup-screen";
 import { Sidebar } from "@/components/sidebar";
@@ -13,7 +14,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useHotkeys } from "@/hooks/use-hotkeys";
 import { useTheme } from "@/hooks/use-theme";
-import { showWindow } from "@/lib/api";
+import { windowReady } from "@/lib/api";
 import { getPref } from "@/lib/prefs";
 import { SMART_VIEWS, useStore, type ViewId } from "@/lib/store";
 import { useUpdates } from "@/lib/updater";
@@ -88,12 +89,12 @@ export default function App() {
       .init()
       .then(() => {
         // Show the window only once real content has painted (no white flash).
-        requestAnimationFrame(() => void showWindow());
+        windowReady();
         if (useStore.getState().account) void useStore.getState().sync();
       })
       .catch((e) => {
         setFatal(String(e instanceof Error ? e.message : e));
-        void showWindow();
+        windowReady();
       });
   }, []);
 
@@ -159,6 +160,8 @@ export default function App() {
       )}
       <CommandPalette />
       <ListDialog />
+      <SearchDialog />
+      <TagDialog />
       <SettingsDialog />
       <Toaster position="bottom-center" closeButton />
     </TooltipProvider>

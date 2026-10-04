@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CalendarIcon, ChevronDownIcon, HashIcon, PlusIcon, RepeatIcon } from "lucide-react";
+import { AtSignIcon, CalendarIcon, ChevronDownIcon, HashIcon, HourglassIcon, PlusIcon, RepeatIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -13,8 +13,9 @@ import {
 import { Kbd } from "@/components/ui/kbd";
 import { dateOnly, formatDue, parseDue } from "@/lib/dates";
 import { setPref } from "@/lib/prefs";
-import { parseQuickAdd } from "@/lib/quick-add";
-import { listIdOf, useStore } from "@/lib/store";
+import { parseQuickAdd, resolveList } from "@/lib/quick-add";
+import { parseQuery } from "@/lib/search";
+import { listIdOf, searchIdOf, tagOf, useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { PriorityFlag, PRIORITIES, priorityLevel } from "./priority";
 import { repeatLabel } from "./repeat";
@@ -28,10 +29,25 @@ export function QuickAdd() {
   const [target, setTarget] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const savedSearches = useStore((s) => s.savedSearches);
   const viewList = listIdOf(view);
-  const listId = viewList ?? target ?? useStore.getState().defaultListId();
-  const list = lists.find((l) => l.id === listId);
   const parsed = useMemo(() => parseQuickAdd(text), [text]);
+  const writable = lists.filter((l) => !l.readOnly);
+  const mentioned = resolveList(parsed.list, writable);
+  // Tag and saved-search views give new tasks what makes them show up there.
+  const viewDefaults = useMemo(() => {
+    const tag = tagOf(view);
+    if (tag !== null) return { tags: [tag], priority: null, due: null, list: null };
+    const saved = savedSearches.find((s) => s.id === searchIdOf(view));
+    return saved ? parseQuery(saved.query).defaults : null;
+  }, [view, savedSearches]);
+  const listId =
+    mentioned?.id ??
+    viewList ??
+    resolveList(viewDefaults?.list ?? null, writable)?.id ??
+    target ??
+    useStore.getState().defaultListId();
+  const list = lists.find((l) => l.id === listId);
 
   useEffect(() => {
     if (focusQuickAdd) inputRef.current?.focus();
@@ -40,16 +56,24 @@ export function QuickAdd() {
   const submit = async () => {
     if (!parsed.summary || !listId) return;
     let { due, priority } = parsed;
+    let categories = parsed.categories;
     // Smart views give new tasks the property that makes them show up there.
     if (!due && view === "today") due = dateOnly(new Date());
     if (!due && view === "upcoming") due = dateOnly(new Date(Date.now() + 86_400_000));
     if (priority == null && view === "important") priority = 1;
+    if (viewDefaults) {
+      const lower = categories.map((c) => c.toLowerCase());
+      categories = [...categories, ...viewDefaults.tags.filter((t) => !lower.includes(t.toLowerCase()))];
+      priority ??= viewDefaults.priority;
+      if (!due && viewDefaults.due) due = dateOnly(viewDefaults.due === "today" ? new Date() : new Date(Date.now() + 86_400_000));
+    }
     setText("");
     const task = await useStore.getState().createTask(listId, {
       summary: parsed.summary,
       due,
+      start: parsed.start,
       priority,
-      categories: parsed.categories,
+      categories,
       rrule: parsed.rrule,
     });
     if (task) {
@@ -60,8 +84,10 @@ export function QuickAdd() {
   };
 
   const due = parseDue(parsed.due);
-  const hasChips = !!(parsed.due || parsed.priority || parsed.categories.length || parsed.rrule) && text !== parsed.summary;
-  const writable = lists.filter((l) => !l.readOnly);
+  const start = parseDue(parsed.start);
+  const hasChips =
+    !!(parsed.due || parsed.start || parsed.priority || parsed.categories.length || parsed.rrule || parsed.list) &&
+    text !== parsed.summary;
 
   if (!writable.length) return null;
 
@@ -89,11 +115,11 @@ export function QuickAdd() {
               e.currentTarget.blur();
             }
           }}
-          placeholder={focused ? "e.g. Pay rent tomorrow 9am !1 #home every month" : "Add a task"}
+          placeholder={focused ? "e.g. Pay rent tomorrow 9am !1 #home @personal every month" : "Add a task"}
           aria-label="Add a task"
           className="placeholder:text-muted-foreground h-10 min-w-0 flex-1 bg-transparent text-sm outline-none"
         />
-        {!viewList && list && (
+        {!viewList && !mentioned && list && (
           <DropdownMenu>
             <DropdownMenuTrigger
               className="text-muted-foreground hover:text-foreground hover:bg-accent flex max-w-40 shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs outline-none"
@@ -131,6 +157,16 @@ export function QuickAdd() {
       </div>
       {hasChips && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 px-1">
+          {parsed.list && (
+            <Badge variant={mentioned ? "secondary" : "destructive"} className="font-normal">
+              <AtSignIcon /> {mentioned ? mentioned.name : `No list “${parsed.list}”`}
+            </Badge>
+          )}
+          {start && (
+            <Badge variant="secondary" className="font-normal">
+              <HourglassIcon /> Starts {formatDue(start)}
+            </Badge>
+          )}
           {due && (
             <Badge variant="secondary" className="font-normal">
               <CalendarIcon /> {formatDue(due)}

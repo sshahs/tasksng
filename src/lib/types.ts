@@ -1,5 +1,11 @@
 export type TaskStatus = "needs-action" | "in-process" | "completed" | "cancelled";
 
+/**
+ * A reminder (an iCalendar VALARM): either a fixed time (UTC) or an offset
+ * in seconds from the due (or start) date; negative means before.
+ */
+export type Reminder = { at: string } | { offset: number; related: "due" | "start" };
+
 export interface Task {
   /** Resource path on the server – unique per task. */
   id: string;
@@ -21,6 +27,7 @@ export interface Task {
   created: string | null;
   modified: string | null;
   sortOrder: number | null;
+  reminders: Reminder[];
   /** Not yet saved to the server. */
   pending: boolean;
 }
@@ -64,9 +71,12 @@ export interface NewTask {
   description?: string | null;
   priority?: number | null;
   due?: string | null;
+  start?: string | null;
   categories?: string[];
   parentUid?: string | null;
   rrule?: string | null;
+  reminders?: Reminder[];
+  sortOrder?: number | null;
 }
 
 export interface TaskPatch {
@@ -79,6 +89,13 @@ export interface TaskPatch {
   categories?: string[];
   parentUid?: string | null;
   rrule?: string | null;
+  sortOrder?: number;
+  reminders?: Reminder[];
+}
+
+export interface TaskUpdate {
+  id: string;
+  patch: TaskPatch;
 }
 
 export interface TaskResult {
@@ -103,4 +120,27 @@ export interface ConnectArgs {
   username: string;
   password: string;
   acceptInvalidCerts: boolean;
+}
+
+export interface Settings {
+  closeToTray: boolean;
+  reminders: boolean;
+  /** Seconds relative to the due time for timed tasks without reminders; null = off. */
+  defaultReminder: number | null;
+  /** e.g. "Super+Alt+N"; null = off. */
+  quickAddShortcut: string | null;
+  trayHintShown: boolean;
+}
+
+export interface SettingsView extends Settings {
+  launchAtLogin: boolean;
+  shortcutError: string | null;
+  nativeNotifications: boolean;
+}
+
+export interface DueReminder {
+  uid: string;
+  id: string;
+  title: string;
+  body: string;
 }

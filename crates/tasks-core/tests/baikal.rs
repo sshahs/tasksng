@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use reqwest::Url;
 use tasks_core::dav::{normalize_url, Credentials, DavClient, PutCondition, WriteResult};
 use tasks_core::model::{NewTask, PatchOutcome, TaskPatch, TaskStatus};
+use tasks_core::reminders::{Related, Reminder};
 use tasks_core::store::{Account, Store};
 use tasks_core::sync::{self, SyncReport};
 use tasks_core::Error;
@@ -130,9 +131,15 @@ async fn round_trip_between_two_devices() {
                 description: Some("Line 1\nLine 2".into()),
                 priority: Some(1),
                 due: Some("2026-11-02T15:30:00Z".into()),
+                start: Some("2026-10-30".into()),
                 categories: vec!["Travel".into(), "Money, mostly".into()],
                 parent_uid: Some(parent.uid.clone()),
-                rrule: None,
+                reminders: vec![
+                    Reminder::Relative { offset: -900, related: Related::Due },
+                    Reminder::Absolute { at: "2026-11-01T08:00:00Z".into() },
+                ],
+                sort_order: Some(42),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -149,6 +156,33 @@ async fn round_trip_between_two_devices() {
     assert_eq!(t.due.as_deref(), Some("2026-11-02T15:30:00Z"));
     assert_eq!(t.categories, vec!["Travel", "Money, mostly"]);
     assert_eq!(t.parent_uid.as_deref(), Some(parent.uid.as_str()));
+    // DTSTART takes DUE's value type (sabre/vobject validation).
+    assert!(t.start.as_deref().is_some_and(|s| s.len() > 10), "{:?}", t.start);
+    assert_eq!(t.sort_order, Some(42));
+    assert_eq!(
+        t.reminders,
+        vec![
+            Reminder::Relative { offset: -900, related: Related::Due },
+            Reminder::Absolute { at: "2026-11-01T08:00:00Z".into() },
+        ]
+    );
+
+    // Edit reminders and status on B.
+    b.store()
+        .update_task(
+            &t.id,
+            &TaskPatch {
+                status: Some(TaskStatus::InProcess),
+                reminders: Some(vec![Reminder::Relative { offset: -86_400, related: Related::Due }]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    b.sync().await;
+    a.sync().await;
+    let t = a.store().task(&child.id).cloned().unwrap();
+    assert_eq!(t.status, TaskStatus::InProcess);
+    assert_eq!(t.reminders, vec![Reminder::Relative { offset: -86_400, related: Related::Due }]);
 
     // Complete on B, A picks it up.
     b.store().update_task(&t.id, &TaskPatch { status: Some(TaskStatus::Completed), ..Default::default() }).unwrap();
@@ -250,6 +284,34 @@ async fn server_accepts_what_we_write() {
     assert!(matches!(outcome, PatchOutcome::Advanced { .. }));
     let report = a.sync().await;
     assert!(report.notices.is_empty(), "{:?}", report.notices);
+
+    // Richer rules: last Friday, counted, repeating after completion, with
+    // a reminder at a fixed time that moves along.
+    let t = a
+        .store()
+        .create_task(
+            &list,
+            &NewTask {
+                summary: "Timesheet".into(),
+                due: Some("2026-10-30T16:00:00Z".into()),
+                rrule: Some("FREQ=MONTHLY;BYDAY=-1FR;COUNT=3;FROM=COMPLETION".into()),
+                reminders: vec![Reminder::Absolute { at: "2026-10-30T15:00:00Z".into() }],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(t.rrule.as_deref(), Some("FREQ=MONTHLY;BYDAY=-1FR;COUNT=3;FROM=COMPLETION"));
+    let (t, outcome) = a.store().update_task(&t.id, &TaskPatch { status: Some(TaskStatus::Completed), ..Default::default() }).unwrap();
+    assert!(matches!(outcome, PatchOutcome::Advanced { .. }));
+    assert_eq!(t.rrule.as_deref(), Some("FREQ=MONTHLY;BYDAY=-1FR;COUNT=2;FROM=COMPLETION"));
+    let report = a.sync().await;
+    assert!(report.notices.is_empty(), "{:?}", report.notices);
+    let b = Device::connect(&url, "test", "test").await.unwrap();
+    b.sync().await;
+    let seen = b.store().task(&t.id).cloned().unwrap();
+    assert_eq!(seen.rrule, t.rrule);
+    assert_eq!(seen.due, t.due);
+    assert_ne!(seen.reminders, vec![Reminder::Absolute { at: "2026-10-30T15:00:00Z".into() }]);
 
     // A task written by another client with a start date, alarm and custom
     // properties; our edits must keep it valid and keep foreign data.

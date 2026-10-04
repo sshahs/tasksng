@@ -7,12 +7,19 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::dates::{utc_stamp, IcalTime};
 use crate::ical::{self, Component, Property};
 use crate::recur::{self, Advance};
+use crate::reminders::{self, Reminder};
 
 pub const PRODID: &str = "-//TasksNG//TasksNG for Windows//EN";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Marks a task that repeats relative to its completion. RFC 5545 has no way
+/// to say this, so it lives next to the RRULE; the UI sees it as a
+/// `FROM=COMPLETION` part of the rule.
+const REPEAT_FROM: &str = "X-TASKSNG-REPEAT-FROM";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TaskStatus {
+    #[default]
     NeedsAction,
     InProcess,
     Completed,
@@ -43,7 +50,7 @@ impl TaskStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
     /// The resource path on the server; unique per task.
@@ -65,6 +72,7 @@ pub struct Task {
     pub created: Option<String>,
     pub modified: Option<String>,
     pub sort_order: Option<i64>,
+    pub reminders: Vec<Reminder>,
     /// Local changes that have not reached the server yet.
     pub pending: bool,
 }
@@ -76,9 +84,12 @@ pub struct NewTask {
     pub description: Option<String>,
     pub priority: Option<u8>,
     pub due: Option<String>,
+    pub start: Option<String>,
     pub categories: Vec<String>,
     pub parent_uid: Option<String>,
     pub rrule: Option<String>,
+    pub reminders: Vec<Reminder>,
+    pub sort_order: Option<i64>,
 }
 
 /// A partial update. For nullable fields `Some(None)` clears the value and
@@ -101,6 +112,7 @@ pub struct TaskPatch {
     #[serde(deserialize_with = "double_option")]
     pub rrule: Option<Option<String>>,
     pub sort_order: Option<i64>,
+    pub reminders: Option<Vec<Reminder>>,
 }
 
 fn double_option<'de, D, T>(de: D) -> Result<Option<Option<T>>, D::Error>
@@ -191,12 +203,24 @@ pub fn task_from_ics(id: &str, list_id: &str, ics: &str, pending: bool) -> Resul
         start: time_ui(todo, "DTSTART"),
         categories,
         parent_uid,
-        rrule: todo.get("RRULE").map(|p| p.value.trim().to_string()),
+        rrule: todo.get("RRULE").map(|p| {
+            let rule = p.value.trim().to_string();
+            if repeats_from_completion(todo) && !recur::split_from_completion(&rule).1 {
+                format!("{rule};{}", recur::FROM_COMPLETION)
+            } else {
+                rule
+            }
+        }),
         created: time_ui(todo, "CREATED"),
         modified: time_ui(todo, "LAST-MODIFIED"),
         sort_order,
+        reminders: reminders::read(todo),
         pending,
     })
+}
+
+fn repeats_from_completion(todo: &Component) -> bool {
+    todo.get(REPEAT_FROM).is_some_and(|p| p.value.trim().eq_ignore_ascii_case("COMPLETION"))
 }
 
 pub fn new_uid() -> String {
@@ -222,9 +246,12 @@ pub fn build_ics(uid: &str, input: &NewTask, now: DateTime<Utc>) -> Result<Strin
         description: input.description.clone().map(Some),
         priority: input.priority,
         due: input.due.clone().map(Some),
+        start: input.start.clone().map(Some),
         categories: Some(input.categories.clone()),
         parent_uid: input.parent_uid.clone().map(Some),
         rrule: input.rrule.clone().map(Some),
+        sort_order: input.sort_order,
+        reminders: (!input.reminders.is_empty()).then(|| input.reminders.clone()),
         ..Default::default()
     };
     let todo = master_todo_mut(&mut cal).expect("just added");
@@ -304,16 +331,26 @@ fn apply_to_todo(todo: &mut Component, patch: &TaskPatch, now: DateTime<Utc>) ->
         }
     }
     if let Some(rrule) = &patch.rrule {
-        match rrule.as_deref().map(str::trim).filter(|r| !r.is_empty()) {
-            Some(r) => {
-                todo.set(Property::new("RRULE", r.trim_start_matches("RRULE:")));
-                // A recurrence needs an anchor.
-                if todo.get("DUE").is_none() && todo.get("DTSTART").is_none() {
-                    todo.set(IcalTime::Date(now.with_timezone(&Local).date_naive()).to_property("DUE"));
-                }
+        let (rule, from_completion) = recur::split_from_completion(rrule.as_deref().unwrap_or_default().trim());
+        let rule = rule.trim().trim_start_matches("RRULE:").to_string();
+        if rule.is_empty() {
+            todo.remove("RRULE");
+            todo.remove(REPEAT_FROM);
+        } else {
+            todo.set(Property::new("RRULE", rule));
+            if from_completion {
+                todo.set(Property::new(REPEAT_FROM, "COMPLETION"));
+            } else {
+                todo.remove(REPEAT_FROM);
             }
-            None => todo.remove("RRULE"),
+            // A recurrence needs an anchor.
+            if todo.get("DUE").is_none() && todo.get("DTSTART").is_none() {
+                todo.set(IcalTime::Date(now.with_timezone(&Local).date_naive()).to_property("DUE"));
+            }
         }
+    }
+    if let Some(list) = &patch.reminders {
+        reminders::apply(todo, list);
     }
     if let Some(status) = patch.status {
         outcome = set_status(todo, status, now);
@@ -323,7 +360,8 @@ fn apply_to_todo(todo: &mut Component, patch: &TaskPatch, now: DateTime<Utc>) ->
 }
 
 fn set_status(todo: &mut Component, status: TaskStatus, now: DateTime<Utc>) -> PatchOutcome {
-    if status == TaskStatus::Completed {
+    // Completing a repeating task moves it on; cancelling skips an occurrence.
+    if status.is_done() {
         if let Some(next) = advance_recurrence(todo, now) {
             return PatchOutcome::Advanced { due: next };
         }
@@ -348,13 +386,29 @@ fn set_status(todo: &mut Component, status: TaskStatus, now: DateTime<Utc>) -> P
 /// Moves a repeating task to its next occurrence. Returns the new due (or
 /// start) date, or `None` when the task should simply be completed.
 fn advance_recurrence(todo: &mut Component, now: DateTime<Utc>) -> Option<String> {
-    let rrule = todo.get("RRULE")?.value.clone();
+    let stored = todo.get("RRULE")?.value.trim().to_string();
+    let (rule, marker) = recur::split_from_completion(&stored);
+    let from_completion = marker || repeats_from_completion(todo);
     let due = todo.get("DUE").and_then(IcalTime::from_property);
     let start = todo.get("DTSTART").and_then(IcalTime::from_property);
     let anchor = due.or(start)?;
     let today = now.with_timezone(&Local).date_naive();
-    let next = match recur::advance(&rrule, anchor, today) {
-        Advance::Next(n) => n,
+    // "3 days after completion" counts from today, at the task's usual time.
+    let (base, not_before) = if from_completion {
+        (anchor.add_days((today - anchor.local_date()).num_days()), today + chrono::Duration::days(1))
+    } else {
+        (anchor, today)
+    };
+    let mut result = recur::advance(&rule, base, not_before);
+    if let Advance::Next { at, .. } = &result {
+        // Completed early on a rule like "last Friday": move past the
+        // current occurrence rather than landing on it again.
+        if from_completion && at.local_date() == anchor.local_date() {
+            result = recur::advance(&rule, anchor, anchor.local_date() + chrono::Duration::days(1));
+        }
+    }
+    let (next, new_rule) = match result {
+        Advance::Next { at, rrule } => (at, rrule),
         Advance::Finished | Advance::Unsupported => return None,
     };
     let shift = (next.local_date() - anchor.local_date()).num_days();
@@ -367,6 +421,13 @@ fn advance_recurrence(todo: &mut Component, now: DateTime<Utc>) -> Option<String
         let prop = keep_params(todo.get("DTSTART"), new_start.to_property("DTSTART"));
         todo.set(prop);
     }
+    if new_rule != rule {
+        let value = if marker { format!("{new_rule};{}", recur::FROM_COMPLETION) } else { new_rule };
+        let prop = keep_params(todo.get("RRULE"), Property::new("RRULE", value));
+        todo.set(prop);
+    }
+    // Reminders at a fixed time move along with the task.
+    reminders::shift_absolute(todo, shift);
     todo.set(Property::new("STATUS", "NEEDS-ACTION"));
     todo.remove("COMPLETED");
     todo.remove("PERCENT-COMPLETE");
@@ -437,7 +498,7 @@ mod tests {
                 due: Some("2026-10-05".into()),
                 categories: vec!["Home".into(), "Money".into()],
                 parent_uid: Some("PARENT".into()),
-                rrule: None,
+                ..Default::default()
             },
             now(),
         )
@@ -519,6 +580,59 @@ mod tests {
         let t = task_from_ics("a", "b", &out, false).unwrap();
         assert!(!t.completed);
         assert_eq!(t.due.as_deref(), Some("2026-10-11"));
+    }
+
+    #[test]
+    fn repeat_after_completion_counts_from_today() {
+        let ics = build_ics(
+            "u",
+            &NewTask {
+                summary: "descale kettle".into(),
+                due: Some("2026-09-20".into()),
+                rrule: Some("FREQ=DAILY;INTERVAL=3;FROM=COMPLETION".into()),
+                ..Default::default()
+            },
+            now(),
+        )
+        .unwrap();
+        assert!(ics.contains("RRULE:FREQ=DAILY;INTERVAL=3\r\n"));
+        assert!(ics.contains("X-TASKSNG-REPEAT-FROM:COMPLETION"));
+        let patch = TaskPatch { status: Some(TaskStatus::Completed), ..Default::default() };
+        let (out, outcome) = patch_ics(&ics, &patch, now()).unwrap();
+        let today = now().with_timezone(&Local).date_naive();
+        let expected = (today + chrono::Duration::days(3)).format("%Y-%m-%d").to_string();
+        assert_eq!(outcome, PatchOutcome::Advanced { due: expected });
+        let t = task_from_ics("a", "b", &out, false).unwrap();
+        assert_eq!(t.rrule.as_deref(), Some("FREQ=DAILY;INTERVAL=3;FROM=COMPLETION"));
+
+        // Turning it off removes the marker.
+        let patch = TaskPatch { rrule: Some(Some("FREQ=DAILY;INTERVAL=3".into())), ..Default::default() };
+        let (out, _) = patch_ics(&out, &patch, now()).unwrap();
+        assert!(!out.contains("X-TASKSNG-REPEAT-FROM"));
+    }
+
+    #[test]
+    fn cancelling_a_repeating_task_skips_one_occurrence() {
+        let ics = build_ics(
+            "u",
+            &NewTask { summary: "gym".into(), due: Some("2026-10-05".into()), rrule: Some("FREQ=WEEKLY".into()), ..Default::default() },
+            now(),
+        )
+        .unwrap();
+        let patch = TaskPatch { status: Some(TaskStatus::Cancelled), ..Default::default() };
+        let (out, outcome) = patch_ics(&ics, &patch, now()).unwrap();
+        assert_eq!(outcome, PatchOutcome::Advanced { due: "2026-10-12".into() });
+        assert!(!task_from_ics("a", "b", &out, false).unwrap().completed);
+    }
+
+    #[test]
+    fn in_process_status() {
+        let ics = new_task("x");
+        let patch = TaskPatch { status: Some(TaskStatus::InProcess), ..Default::default() };
+        let (out, _) = patch_ics(&ics, &patch, now()).unwrap();
+        let t = task_from_ics("a", "b", &out, false).unwrap();
+        assert_eq!(t.status, TaskStatus::InProcess);
+        assert!(!t.completed);
     }
 
     #[test]

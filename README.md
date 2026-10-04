@@ -18,15 +18,33 @@ A fast, keyboard-friendly task manager for Windows 10 and 11 that syncs with you
 
 ## Features
 
-- Smart lists: **Today** (incl. overdue), **Upcoming** (grouped by day), **Important**, **All tasks**
+- Smart lists: **Today** (incl. overdue and tasks starting today), **Upcoming** (grouped by day),
+  **Important**, **All tasks**
 - Your Baikal calendars that hold tasks appear as lists; create, rename, recolor and delete lists
-- Quick add with shortcuts: `Pay rent tomorrow 9am !1 #home every month`
+- **Reminders** as Windows notifications with *Snooze* and *Done* buttons. They are standard
+  iCalendar alarms, so reminders set in Thunderbird, on an iPhone or in Tasks.org work here too
+  (and the other way round). Tasks with a due time can get an automatic reminder (Settings).
+- **Runs in the notification area**: closing the window keeps TasksNG (and reminders) running;
+  optionally starts with Windows
+- **Quick add from anywhere**: <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd> (configurable) opens a
+  small box on top of whatever you're doing
+- Quick add with shortcuts: `Pay rent tomorrow 9am !1 #home @personal every month`
   - dates: `today`, `tomorrow`, weekdays (`fri`), `next week`, `in 3 days`, `2026-12-01`
+  - start dates: `from fri`, `starting next week`
   - times: `9am`, `17:30`
-  - priority: `!1` / `!2` / `!3` (or `!!!`, `!high` …), tags: `#tag`
-  - repeat: `daily`, `weekly`, `weekdays`, `monthly`, `yearly`, `every week` …
-- Due dates with optional time, priority, tags, notes, subtasks, repeating tasks
-  (completing a repeating task moves it to the next occurrence)
+  - priority: `!1` / `!2` / `!3` (or `!!!`, `!high` …), tags: `#tag`, list: `@name`
+  - repeat: `daily`, `weekdays`, `every 2 weeks`, `every tue and thu`, `every 15th`,
+    `every last friday`, `every 3 days after completion` …
+- Due and start dates (tasks that start later stay out of the way until then), priority,
+  status (to do, in progress, done, cancelled), tags, notes, subtasks
+- Repeating tasks: every n days/weeks/months/years, chosen weekdays, a day of the month or "the
+  last Friday", a number of times or until a date, or counted from completion. Completing one
+  moves it to the next occurrence; cancelling skips one.
+- Notes with Markdown: **bold**, _italic_, lists, `- [ ]` checklists you can tick, clickable links
+- Drag and drop: reorder tasks, drop onto another task to make a subtask, onto a list to move it,
+  onto *Today* / *Important* or a tag to set those
+- Sort each list by due date, priority, title, creation date or manually
+- Tags in the sidebar, and **saved searches** using filters (see below)
 - Move tasks between lists, duplicate, delete with undo
 - Search, command palette (<kbd>Ctrl</kbd>+<kbd>K</kbd>) and full keyboard control
 - Automatic background sync (configurable) plus sync on focus and when the network returns
@@ -40,11 +58,15 @@ A fast, keyboard-friendly task manager for Windows 10 and 11 that syncs with you
 
 | Keys | Action |
 | --- | --- |
+| <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd> | Quick add from anywhere (configurable) |
 | <kbd>N</kbd> / <kbd>Ctrl</kbd>+<kbd>N</kbd> | New task |
-| <kbd>Ctrl</kbd>+<kbd>K</kbd> | Command palette / jump to any task |
+| <kbd>Ctrl</kbd>+<kbd>K</kbd> | Command palette / jump to any task, list, tag or saved search |
 | <kbd>Ctrl</kbd>+<kbd>F</kbd> or <kbd>/</kbd> | Search |
 | <kbd>↑</kbd> <kbd>↓</kbd> (or <kbd>J</kbd> <kbd>K</kbd>) | Move selection |
 | <kbd>Space</kbd> | Complete / reopen |
+| <kbd>I</kbd> | Mark as in progress |
+| <kbd>Alt</kbd>+<kbd>↑</kbd> <kbd>↓</kbd> | Move the task up / down (manual order) |
+| <kbd>Alt</kbd>+<kbd>→</kbd> <kbd>←</kbd> | Make it a subtask of the task above / move it out |
 | <kbd>Enter</kbd> / <kbd>F2</kbd> | Edit title |
 | <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>0</kbd> | High / medium / low / no priority |
 | <kbd>T</kbd> / <kbd>M</kbd> | Due today / tomorrow |
@@ -54,6 +76,22 @@ A fast, keyboard-friendly task manager for Windows 10 and 11 that syncs with you
 | <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd> | Switch list |
 | <kbd>Ctrl</kbd>+<kbd>B</kbd> | Toggle sidebar |
 | <kbd>F5</kbd> | Sync now |
+
+### Search filters
+
+The search box and saved searches understand filters; put `-` in front of anything to exclude it.
+
+| Filter | Finds |
+| --- | --- |
+| `milk` | tasks with "milk" in the title, notes or tags |
+| `#home` | tagged *home* |
+| `!1` `!2` `!3` | high, medium, low priority |
+| `list:Work`, `list:"Big project"` | tasks in a list |
+| `due:today` `due:tomorrow` `due:overdue` `due:week` `due:none` `due:2026-12-01` | by due date |
+| `is:open` `is:done` `is:progress` `is:cancelled` `is:repeating` `is:reminder` `is:subtask` `is:later` | by state |
+
+For example `#work !1 -is:progress due:week`. Click the bookmark next to the search box to keep a
+search in the sidebar.
 
 ## Install
 
@@ -76,26 +114,36 @@ Calendars that only allow events are not shown. In Baikal, a calendar's componen
 in the admin panel (*Users and resources → Calendars*); new lists created from TasksNG are
 task-only calendars.
 
+## Reminders and running in the background
+
+TasksNG shows reminders while it runs, so by default closing the window keeps it running in the
+notification area (next to the clock); right-click its icon to quit. Settings has options to quit
+on close instead and to start TasksNG when you sign in to Windows (it then starts quietly in the
+notification area).
+
+- Reminders are the tasks' iCalendar alarms (`VALARM`), shared with other CalDAV apps. Which
+  reminders were shown and snoozes are remembered on this PC only.
+- Tasks with a due time and no reminder of their own get an automatic one (at the due time by
+  default; adjustable or off in Settings). This is local and isn't written to the server.
+- Reminders missed while TasksNG wasn't running are shown when it starts, if they are less than a
+  day old.
+- If notifications don't appear, check *Settings → System → Notifications* in Windows (and Focus /
+  Do not disturb). *Settings → Send a test notification* in TasksNG shows a sample.
+
 ## Updates
-
-Installed copies check `https://github.com/sshahs/tasksng/releases/latest/download/latest.json`
-shortly after start-up and every six hours (can be turned off in Settings). A newer version
-is downloaded in the background and only accepted if its signature matches the public key
-built into the app (`plugins.updater.pubkey` in `src-tauri/tauri.conf.json`). The user is then
-offered *Restart now*; the installer runs in passive mode and reopens TasksNG. Unsynced
-changes are written to disk before the installer starts.
-
 ## How it works
 
 ```
 ┌──────────────── WebView2 ────────────────┐      ┌──────────── Rust ─────────────┐
-│ React + shadcn/ui                        │ IPC  │ tauri commands                │
+│ React + shadcn/ui                        │ IPC  │ tauri commands, tray, toasts  │
 │ zustand store (optimistic updates)       │◄────►│ tasks-core                    │
 └──────────────────────────────────────────┘      │  ├ store.rs  local cache (JSON)│
                                                   │  ├ sync.rs   push → pull       │
                                                   │  ├ dav/      CalDAV client     │
                                                   │  ├ ical.rs   lossless iCal     │
-                                                  │  └ model.rs  VTODO ⇄ Task      │
+                                                  │  ├ model.rs  VTODO ⇄ Task      │
+                                                  │  ├ recur.rs  repeat rules      │
+                                                  │  └ alarms.rs reminders due     │
                                                   └───────────────┬───────────────┘
                                                                   │ HTTPS (WebDAV)
                                                              Baikal server
@@ -108,6 +156,8 @@ changes are written to disk before the installer starts.
   (`calendar-multiget`).
 - Conflicts (a task changed on another device in the meantime) keep the server's version
   and show a notice.
+- Manual order is stored in `X-APPLE-SORT-ORDER` (as Apple Reminders and Tasks.org do);
+  "repeat after completion" in `X-TASKSNG-REPEAT-FROM`, since iCalendar has no field for it.
 
 ## Development
 
@@ -127,8 +177,9 @@ password is `demo`).
 ### Tests
 
 ```sh
-npm test                     # UI logic (quick-add parser, views)
-cargo test -p tasks-core     # iCalendar, recurrence, store, auth unit tests
+npm test                     # UI logic (quick add, views, search, sorting, drag and drop, Markdown, repeat rules)
+cargo test -p tasks-core     # iCalendar, recurrence, reminders, store, auth unit tests
+cargo test -p tasksng        # notification payloads (needs the Tauri build dependencies)
 
 # End-to-end against a real sabre/dav server configured exactly like Baikal:
 cd tools/baikal-dev-server && composer install
@@ -180,5 +231,7 @@ tools/baikal-dev-server Baikal-equivalent CalDAV server for development and test
 scripts/                release helpers used by CI (version stamping, updater manifest)
 ```
 
-Data lives in `%APPDATA%\app.tasksng.desktop\tasks-cache.json`; logs are written to
-`%LOCALAPPDATA%\app.tasksng.desktop\logs\`.
+Data lives in `%APPDATA%\app.tasksng.desktop\`: `tasks-cache.json` (tasks and pending
+changes), `settings.json` and `reminders.json`. Logs are written to
+`%LOCALAPPDATA%\app.tasksng.desktop\logs\`. Saved searches, sort orders and view preferences
+are kept in the app's web storage.

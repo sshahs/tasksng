@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Task } from "./types";
-import { buildSections, countOpen } from "./views";
+import { buildSections, countOpen, tagCounts } from "./views";
 
 const NOW = new Date(2026, 9, 4, 10, 0, 0);
 let n = 0;
@@ -25,6 +25,7 @@ function task(p: Partial<Task>): Task {
     created: null,
     modified: null,
     sortOrder: null,
+    reminders: [],
     pending: false,
     ...p,
   };
@@ -84,6 +85,55 @@ describe("buildSections", () => {
     const tasks = [task({ summary: "Buy milk", categories: ["shop"] }), task({ summary: "Call mom" })];
     const s = buildSections("all", tasks, { ...opts, search: "#shop" });
     expect(s[0].rows.map((r) => r.task.summary)).toEqual(["Buy milk"]);
+  });
+
+  it("keeps tasks that start later out of the way", () => {
+    const tasks = [
+      task({ summary: "starts today", start: "2026-10-04", listId: "/s/" }),
+      task({ summary: "starts friday", start: "2026-10-09", listId: "/s/" }),
+      task({ summary: "plain", listId: "/s/" }),
+    ];
+    expect(buildSections("today", tasks, opts)[0].rows.map((r) => r.task.summary)).toEqual(["starts today"]);
+    const allView = buildSections("all", tasks, opts);
+    expect(allView[0].rows.map((r) => r.task.summary)).not.toContain("starts friday");
+    expect(allView[1]).toMatchObject({ title: "Starts later" });
+    expect(countOpen("all", tasks, NOW)).toBe(2);
+    const list = buildSections("list:/s/", tasks, opts);
+    expect(list.map((s) => s.title)).toEqual([null, "Starts later"]);
+    expect(list[1].rows.map((r) => r.task.summary)).toEqual(["starts friday"]);
+    expect(countOpen("list:/s/", tasks, NOW)).toBe(2);
+    // Searching finds them anyway, and Upcoming lists them on their start day.
+    expect(buildSections("list:/s/", tasks, { ...opts, search: "friday" })[0].rows.length).toBe(1);
+    expect(buildSections("upcoming", tasks, opts).map((s) => s.title)).toEqual(["Friday"]);
+  });
+
+  it("shows tag views and saved searches", () => {
+    const tasks = [
+      task({ summary: "milk", categories: ["Shop"], listId: "/a/" }),
+      task({ summary: "report", categories: ["work"], priority: 1, listId: "/b/" }),
+      task({ summary: "old", categories: ["work"], completed: true, status: "completed" }),
+    ];
+    expect(buildSections("tag:shop", tasks, opts)[0].rows.map((r) => r.task.summary)).toEqual(["milk"]);
+    const saved = [{ id: "s1", name: "Urgent work", query: "#work !1" }, { id: "s2", name: "Done", query: "#work is:done" }];
+    const so = { ...opts, savedSearches: saved };
+    expect(buildSections("search:s1", tasks, so)[0].rows.map((r) => r.task.summary)).toEqual(["report"]);
+    expect(buildSections("search:s2", tasks, so).flatMap((s) => s.rows).map((r) => r.task.summary)).toEqual(["old"]);
+    expect(countOpen("tag:work", tasks, NOW)).toBe(1);
+    expect(tagCounts(tasks)).toEqual([
+      { tag: "Shop", count: 1 },
+      { tag: "work", count: 1 },
+    ]);
+  });
+
+  it("sorts by the chosen mode", () => {
+    const tasks = [
+      task({ summary: "b", listId: "/m/", sortOrder: 2 }),
+      task({ summary: "a", listId: "/m/", sortOrder: 3 }),
+      task({ summary: "c", listId: "/m/", sortOrder: 1 }),
+    ];
+    const names = (sort: "manual" | "title") => buildSections("list:/m/", tasks, { ...opts, sort })[0].rows.map((r) => r.task.summary);
+    expect(names("manual")).toEqual(["c", "b", "a"]);
+    expect(names("title")).toEqual(["a", "b", "c"]);
   });
 
   it("groups upcoming by day", () => {

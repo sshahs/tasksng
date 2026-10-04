@@ -1,8 +1,30 @@
 import { startOfDay } from "date-fns";
 
 import { formatDayHeading, isDueToday, isOverdue, parseDue } from "./dates";
-import { listIdOf, type ViewId } from "./store";
-import type { Task } from "./types";
+import { matchesQuery, parseQuery, startsLater, type Query, type QueryContext } from "./search";
+import { comparator, compareDone, compareOpen, type SortMode } from "./sort";
+import type { Task, TaskList } from "./types";
+
+export { compareDone, compareOpen };
+
+export type SmartView = "today" | "upcoming" | "important" | "all";
+export type ViewId = SmartView | `list:${string}` | `tag:${string}` | `search:${string}`;
+
+export interface SavedSearch {
+  id: string;
+  name: string;
+  query: string;
+}
+
+export function listIdOf(view: ViewId): string | null {
+  return view.startsWith("list:") ? view.slice(5) : null;
+}
+export function tagOf(view: ViewId): string | null {
+  return view.startsWith("tag:") ? view.slice(4) : null;
+}
+export function searchIdOf(view: ViewId): string | null {
+  return view.startsWith("search:") ? view.slice(7) : null;
+}
 
 export interface Row {
   task: Task;
@@ -24,54 +46,47 @@ export interface ViewOptions {
   search: string;
   showCompleted: boolean;
   collapsed: Record<string, boolean>;
+  sort?: SortMode;
+  lists?: TaskList[];
+  savedSearches?: SavedSearch[];
   now?: Date;
 }
 
-const dueKey = (t: Task) => {
-  const d = parseDue(t.due);
-  return d ? d.date.getTime() : Number.POSITIVE_INFINITY;
-};
-const prioKey = (t: Task) => (t.priority === 0 ? 10 : t.priority);
+const sameDay = (a: Date, b: Date) => startOfDay(a).getTime() === startOfDay(b).getTime();
 
-export function compareOpen(a: Task, b: Task): number {
-  return (
-    dueKey(a) - dueKey(b) ||
-    prioKey(a) - prioKey(b) ||
-    (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
-    (a.created ?? "").localeCompare(b.created ?? "") ||
-    a.summary.localeCompare(b.summary)
-  );
+function startsToday(t: Task, now: Date): boolean {
+  const start = parseDue(t.start);
+  return !!start && sameDay(start.date, now);
 }
 
-export function compareDone(a: Task, b: Task): number {
-  return (b.completedAt ?? "").localeCompare(a.completedAt ?? "") || a.summary.localeCompare(b.summary);
+/** The saved query behind a view, if it is a tag or saved-search view. */
+function viewQuery(view: ViewId, saved: SavedSearch[] | undefined): Query | null {
+  const tag = tagOf(view);
+  if (tag !== null) return parseQuery(`tag:"${tag.replace(/"/g, "")}"`);
+  const id = searchIdOf(view);
+  if (id !== null) return parseQuery(saved?.find((s) => s.id === id)?.query ?? "");
+  return null;
 }
 
-function matches(t: Task, terms: string[]): boolean {
-  if (!terms.length) return true;
-  const hay = `${t.summary}\n${t.description}\n${t.categories.map((c) => "#" + c).join(" ")}`.toLowerCase();
-  return terms.every((term) => hay.includes(term));
-}
-
-export function searchTerms(search: string): string[] {
-  return search.toLowerCase().split(/\s+/).filter(Boolean);
-}
-
-function inView(view: ViewId, t: Task, now: Date): boolean {
+function inView(view: ViewId, t: Task, now: Date, q: Query | null, ctx: QueryContext): boolean {
   const listId = listIdOf(view);
   if (listId) return t.listId === listId;
+  const later = !t.completed && startsLater(t, now);
+  if (q) return matchesQuery(t, q, ctx);
   switch (view) {
     case "today": {
       const due = parseDue(t.due);
-      if (t.completed) return !!t.completedAt && startOfDay(new Date(t.completedAt)).getTime() === startOfDay(now).getTime();
-      return isOverdue(due, now) || isDueToday(due, now);
+      if (t.completed) return !!t.completedAt && sameDay(new Date(t.completedAt), now);
+      return isOverdue(due, now) || isDueToday(due, now) || startsToday(t, now);
     }
     case "upcoming":
-      return !!t.due;
+      return !!t.due || later;
     case "important":
-      return t.priority >= 1 && t.priority <= 4;
-    default:
+      return t.priority >= 1 && t.priority <= 4 && !later;
+    case "all":
       return true;
+    default:
+      return false;
   }
 }
 
@@ -122,57 +137,110 @@ function flat(tasks: Task[], all: Task[]): Row[] {
   });
 }
 
+function context(opts: Pick<ViewOptions, "lists">, now: Date): QueryContext {
+  return { listNames: new Map((opts.lists ?? []).map((l) => [l.id, l.name])), now };
+}
+
 export function buildSections(view: ViewId, all: Task[], opts: ViewOptions): Section[] {
   const now = opts.now ?? new Date();
-  const terms = searchTerms(opts.search);
-  const inThisView = all.filter((t) => inView(view, t, now) && matches(t, terms));
+  const ctx = context(opts, now);
+  const q = viewQuery(view, opts.savedSearches);
+  const search = opts.search.trim() ? parseQuery(opts.search) : null;
+  const sort = comparator(opts.sort ?? "smart");
+  const inThisView = all.filter(
+    (t) => inView(view, t, now, q, ctx) && (!search || matchesQuery(t, search, ctx)),
+  );
+  // Finished tasks are hidden unless asked for (or the saved search is about them).
+  const showDone = opts.showCompleted || !!q?.wantsDone || !!search?.wantsDone;
   const open = inThisView.filter((t) => !t.completed);
-  const done = opts.showCompleted ? inThisView.filter((t) => t.completed) : [];
+  const done = showDone ? inThisView.filter((t) => t.completed) : [];
   const sections: Section[] = [];
 
   if (view === "today") {
     const overdue = open.filter((t) => isOverdue(parseDue(t.due), now) && !isDueToday(parseDue(t.due), now));
     const today = open.filter((t) => !overdue.includes(t));
-    if (overdue.length) sections.push({ id: "overdue", title: "Overdue", tone: "danger", rows: flat(overdue.sort(compareOpen), all) });
-    sections.push({ id: "today", title: overdue.length ? "Today" : null, rows: flat(today.sort(compareOpen), all) });
+    if (overdue.length) sections.push({ id: "overdue", title: "Overdue", tone: "danger", rows: flat(overdue.sort(sort), all) });
+    sections.push({ id: "today", title: overdue.length ? "Today" : null, rows: flat(today.sort(sort), all) });
   } else if (view === "upcoming") {
     const groups = new Map<string, Task[]>();
     const overdue: Task[] = [];
-    for (const t of open.sort(compareOpen)) {
-      const due = parseDue(t.due)!;
-      if (isOverdue(due, now) && !isDueToday(due, now)) {
+    const day = (t: Task) => (parseDue(t.due) ?? parseDue(t.start))!.date;
+    for (const t of open.sort((a, b) => day(a).getTime() - day(b).getTime() || sort(a, b))) {
+      const due = parseDue(t.due);
+      if (due && isOverdue(due, now) && !isDueToday(due, now)) {
         overdue.push(t);
         continue;
       }
-      const key = startOfDay(due.date).toISOString();
+      const key = startOfDay(day(t)).toISOString();
       groups.set(key, [...(groups.get(key) ?? []), t]);
     }
     if (overdue.length) sections.push({ id: "overdue", title: "Overdue", tone: "danger", rows: flat(overdue, all) });
     for (const [key, tasks] of groups) {
-      sections.push({ id: key, title: formatDayHeading(new Date(key), now), rows: flat(tasks, all) });
+      sections.push({ id: key, title: formatDayHeading(new Date(key), now), rows: flat(tasks.sort(sort), all) });
     }
     if (!sections.length) sections.push({ id: "empty", title: null, rows: [] });
   } else if (listIdOf(view)) {
-    const visible = opts.showCompleted ? inThisView : open;
+    // Tasks that start later wait in their own section (search finds them anyway).
+    const later = search ? [] : open.filter((t) => startsLater(t, now));
+    const current = open.filter((t) => !later.includes(t));
     // Completed subtasks of open parents stay nested under their parent.
-    const parentsOpen = new Set(open.map((t) => `${t.listId}\u0000${t.uid}`));
+    const parentsOpen = new Set(current.map((t) => `${t.listId}\u0000${t.uid}`));
     const nestedDone = done.filter((t) => t.parentUid && parentsOpen.has(`${t.listId}\u0000${t.parentUid}`));
-    const openRows = tree([...open, ...nestedDone], all, opts, compareOpen);
+    const openRows = tree([...current, ...nestedDone], all, opts, sort);
     sections.push({ id: "open", title: null, rows: openRows });
+    if (later.length) {
+      const byStart = (a: Task, b: Task) =>
+        (parseDue(a.start)?.date.getTime() ?? 0) - (parseDue(b.start)?.date.getTime() ?? 0) || sort(a, b);
+      sections.push({ id: "later", title: "Starts later", tone: "muted", rows: tree(later, all, opts, byStart) });
+    }
     const shown = new Set(openRows.map((r) => r.task.id));
-    const rest = visible.filter((t) => t.completed && !shown.has(t.id));
+    const rest = done.filter((t) => !shown.has(t.id));
     if (rest.length) sections.push({ id: "done", title: "Completed", tone: "muted", rows: tree(rest, all, opts, compareDone) });
     return sections;
   } else {
-    sections.push({ id: "open", title: null, rows: flat(open.sort(compareOpen), all) });
+    // All tasks, tags and saved searches: tasks that start later go last.
+    const later = search || q?.wantsLater ? [] : open.filter((t) => startsLater(t, now));
+    sections.push({ id: "open", title: null, rows: flat(open.filter((t) => !later.includes(t)).sort(sort), all) });
+    if (later.length) sections.push({ id: "later", title: "Starts later", tone: "muted", rows: flat(later.sort(sort), all) });
   }
 
   if (done.length) sections.push({ id: "done", title: "Completed", tone: "muted", rows: flat(done.sort(compareDone), all) });
   return sections;
 }
 
-export function countOpen(view: ViewId, all: Task[], now = new Date()): number {
+export function countOpen(
+  view: ViewId,
+  all: Task[],
+  now = new Date(),
+  opts: Pick<ViewOptions, "lists" | "savedSearches"> = {},
+): number {
+  const ctx = context(opts, now);
+  const q = viewQuery(view, opts.savedSearches);
   let n = 0;
-  for (const t of all) if (!t.completed && inView(view, t, now)) n++;
+  for (const t of all) {
+    if (t.completed || !inView(view, t, now, q, ctx)) continue;
+    // Counts match the main section, without tasks that start later.
+    if (view !== "upcoming" && !q?.wantsLater && startsLater(t, now)) continue;
+    n++;
+  }
   return n;
+}
+
+/** All tags in use, with the number of current open tasks carrying them. */
+export function tagCounts(all: Task[], now = new Date()): { tag: string; count: number }[] {
+  const counts = new Map<string, { tag: string; count: number }>();
+  for (const t of all) {
+    for (const c of t.categories) {
+      const key = c.toLowerCase();
+      const entry = counts.get(key) ?? { tag: c, count: 0 };
+      if (!t.completed && !startsLater(t, now)) entry.count++;
+      counts.set(key, entry);
+    }
+  }
+  return [...counts.values()].sort((a, b) => a.tag.localeCompare(b.tag, undefined, { sensitivity: "base" }));
+}
+
+/** Whether a task shows up in the given view (used to jump to a task). */
+export function isInView(view: ViewId, t: Task, opts: Pick<ViewOptions, "lists" | "savedSearches"> = {}, now = new Date()) {
+  return inView(view, t, now, viewQuery(view, opts.savedSearches), context(opts, now));
 }

@@ -3,10 +3,12 @@ import {
   CheckCircle2Icon,
   CircleIcon,
   EyeIcon,
+  HashIcon,
   ListPlusIcon,
   MoonIcon,
   PlusIcon,
   RefreshCwIcon,
+  SearchIcon,
   SettingsIcon,
   SunIcon,
 } from "lucide-react";
@@ -22,17 +24,30 @@ import {
 } from "@/components/ui/command";
 import { useTheme } from "@/hooks/use-theme";
 import { formatDue, parseDue } from "@/lib/dates";
-import { SMART_VIEWS, useStore } from "@/lib/store";
+import { SMART_VIEWS, useStore, type ViewId } from "@/lib/store";
+import { tagCounts } from "@/lib/views";
 
 export function CommandPalette() {
   const open = useStore((s) => s.paletteOpen);
   const tasks = useStore((s) => s.tasks);
   const lists = useStore((s) => s.lists);
   const showCompleted = useStore((s) => s.showCompleted);
+  const savedSearches = useStore((s) => s.savedSearches);
   const { resolved, setTheme } = useTheme();
   const [query, setQuery] = useState("");
 
   const listById = useMemo(() => new Map(lists.map((l) => [l.id, l])), [lists]);
+  const tags = useMemo(() => (open ? tagCounts(Object.values(tasks)) : []), [open, tasks]);
+  const destinations: { id: ViewId; label: string; icon: React.ReactNode }[] = [
+    ...SMART_VIEWS.map((v) => ({ id: v.id as ViewId, label: v.label, icon: <CircleIcon /> })),
+    ...lists.map((l) => ({
+      id: `list:${l.id}` as ViewId,
+      label: l.name,
+      icon: <span className="m-[3px] size-2.5 rounded-full" style={{ background: l.color ?? "var(--muted-foreground)" }} />,
+    })),
+    ...savedSearches.map((s) => ({ id: `search:${s.id}` as ViewId, label: s.name, icon: <SearchIcon /> })),
+    ...tags.map((t) => ({ id: `tag:${t.tag}` as ViewId, label: `#${t.tag}`, icon: <HashIcon /> })),
+  ];
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return [];
@@ -72,12 +87,7 @@ export function CommandPalette() {
                 <CommandItem
                   key={t.id}
                   value={t.id}
-                  onSelect={run(() => {
-                    const s = useStore.getState();
-                    s.setView(`list:${t.listId}`);
-                    if (t.completed && !s.showCompleted) s.set({ showCompleted: true });
-                    s.select(t.id);
-                  })}
+                  onSelect={run(() => useStore.getState().openTask(t.id))}
                 >
                   {t.completed ? <CheckCircle2Icon /> : <CircleIcon />}
                   <span className={t.completed ? "text-muted-foreground truncate line-through" : "truncate"}>
@@ -98,18 +108,12 @@ export function CommandPalette() {
           </CommandGroup>
         )}
         <Group query={query} heading="Go to">
-          {[...SMART_VIEWS.map((v) => ({ id: v.id as string, label: v.label, color: null as string | null })), ...lists.map((l) => ({ id: `list:${l.id}`, label: l.name, color: l.color }))].map(
-            (v) => (
-              <Item key={v.id} query={query} label={v.label} onSelect={run(() => useStore.getState().setView(v.id as never))}>
-                {v.color ? (
-                  <span className="m-[3px] size-2.5 rounded-full" style={{ background: v.color }} />
-                ) : (
-                  <CircleIcon />
-                )}
-                {v.label}
-              </Item>
-            ),
-          )}
+          {destinations.map((v) => (
+            <Item key={v.id} query={query} label={v.label} onSelect={run(() => useStore.getState().setView(v.id))}>
+              {v.icon}
+              {v.label}
+            </Item>
+          ))}
         </Group>
         <Group query={query} heading="Commands">
           <Item query={query} label="New task" onSelect={run(() => useStore.setState((s) => ({ focusQuickAdd: s.focusQuickAdd + 1 })))}>

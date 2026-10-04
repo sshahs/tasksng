@@ -32,6 +32,14 @@ export const priorityBorder: Record<PriorityLevel, string> = {
   none: "border-muted-foreground/50",
 };
 
+/** Fill for the half-filled "in progress" circle. */
+export const priorityFill: Record<PriorityLevel, string> = {
+  high: "bg-priority-high",
+  medium: "bg-priority-medium",
+  low: "bg-priority-low",
+  none: "bg-muted-foreground/70",
+};
+
 export function PriorityFlag({ priority, className }: { priority: number; className?: string }) {
   const level = priorityLevel(priority);
   if (level === "none") return null;
