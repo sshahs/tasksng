@@ -16,6 +16,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { showWindow } from "@/lib/api";
 import { getPref } from "@/lib/prefs";
 import { SMART_VIEWS, useStore, type ViewId } from "@/lib/store";
+import { useUpdates } from "@/lib/updater";
 
 function useAutoSync() {
   const signedIn = useStore((s) => !!s.account);
@@ -54,6 +55,25 @@ function useAutoSync() {
   }, [signedIn, minutes, offline]);
 }
 
+/** Looks for updates shortly after start-up and then every six hours. */
+function useAutoUpdate() {
+  const autoCheck = useUpdates((s) => s.autoCheck);
+  const supported = useUpdates((s) => s.supported);
+  useEffect(() => {
+    void useUpdates.getState().detectSupport();
+  }, []);
+  useEffect(() => {
+    if (!autoCheck || !supported) return;
+    const check = () => void useUpdates.getState().check();
+    const first = window.setTimeout(check, 8_000);
+    const every = window.setInterval(check, 6 * 60 * 60_000);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(every);
+    };
+  }, [autoCheck, supported]);
+}
+
 export default function App() {
   useTheme();
   const ready = useStore((s) => s.ready);
@@ -78,6 +98,7 @@ export default function App() {
   }, []);
 
   useAutoSync();
+  useAutoUpdate();
 
   // Keep the browser engine's own shortcuts (reload, print, find) out of the way.
   useEffect(() => {

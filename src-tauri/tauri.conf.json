@@ -50,6 +50,18 @@
         "installMode": "currentUser",
         "displayLanguageSelector": false
       }
+    },
+    "createUpdaterArtifacts": false
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDBENTdFRjM4M0FFNDUwNUEKUldSYVVPUTZPTzlYRFQ0ejJaSmxTOFhkcU5QVUkrSlhxbnh0cENwYThZK1ZGZXVydzNvTkxHRkYK",
+      "endpoints": [
+        "https://github.com/sshahs/tasksng/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

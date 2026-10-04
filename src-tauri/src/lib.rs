@@ -406,6 +406,37 @@ async fn delete_list(app: AppHandle, state: State<'_, AppState>, id: String) -> 
     Ok(state.store().snapshot())
 }
 
+/// Writes the cache to disk right away. Called before an update is installed:
+/// on Windows the updater ends the process without the usual exit events.
+#[tauri::command]
+async fn prepare_for_update(state: State<'_, AppState>) -> Result<(), String> {
+    let _guard = state.save_lock.lock().await;
+    state.store().save_now().map_err(err)
+}
+
+/// Whether this copy can update itself: true for the NSIS (per-user) and MSI
+/// installs, false for the portable exe, which would otherwise run the
+/// installer and end up as a second, installed copy.
+#[tauri::command]
+fn updates_supported() -> bool {
+    #[cfg(windows)]
+    {
+        let Ok(exe) = std::env::current_exe() else { return false };
+        if exe.parent().is_some_and(|dir| dir.join("uninstall.exe").exists()) {
+            return true;
+        }
+        let exe = exe.to_string_lossy().to_lowercase();
+        ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"]
+            .iter()
+            .filter_map(|v| std::env::var(v).ok())
+            .any(|dir| exe.starts_with(&dir.to_lowercase()))
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 fn show_main_window(app: &AppHandle) {
@@ -428,6 +459,8 @@ pub fn run() {
                 .max_file_size(2_000_000)
                 .build(),
         )
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_state_flags(
@@ -502,6 +535,8 @@ pub fn run() {
             create_list,
             update_list,
             delete_list,
+            prepare_for_update,
+            updates_supported,
         ])
         .build(tauri::generate_context!())
         .expect("error while building TasksNG");

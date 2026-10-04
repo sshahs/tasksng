@@ -68,6 +68,8 @@ export const api = {
   updateList: (id: string, name: string | null, color: string | null) =>
     call<Snapshot>("update_list", { id, name, color }),
   deleteList: (id: string) => call<Snapshot>("delete_list", { id }),
+  prepareForUpdate: () => call<void>("prepare_for_update"),
+  updatesSupported: () => call<boolean>("updates_supported"),
 };
 
 export async function showWindow() {

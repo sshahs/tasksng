@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import {
+  ArrowUpCircleIcon,
   CalendarDaysIcon,
   FlagIcon,
   InboxIcon,
@@ -20,6 +21,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDayKey } from "@/hooks/use-day-key";
 import { SMART_VIEWS, useStore, type SmartView, type ViewId } from "@/lib/store";
+import { useUpdates } from "@/lib/updater";
 import { cn } from "@/lib/utils";
 import { countOpen } from "@/lib/views";
 import { SyncIndicator } from "./sync-indicator";
@@ -68,6 +70,7 @@ export function Sidebar() {
   const lists = useStore((s) => s.lists);
   const tasks = useStore((s) => s.tasks);
   const account = useStore((s) => s.account);
+  const update = useUpdates((s) => (s.phase === "ready" || s.phase === "installing" ? s.version : null));
   const dayKey = useDayKey();
   const all = useMemo(() => Object.values(tasks), [tasks]);
 
@@ -169,6 +172,22 @@ export function Sidebar() {
 
       <div className="border-sidebar-border flex items-center gap-1 border-t p-2">
         <SyncIndicator />
+        {update && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-primary shrink-0"
+                onClick={() => void useUpdates.getState().install()}
+                aria-label={`Restart to update to ${update}`}
+              >
+                <ArrowUpCircleIcon />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Restart to update to {update}</TooltipContent>
+          </Tooltip>
+        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { LogOutIcon, MonitorIcon, MoonIcon, RefreshCwIcon, SunIcon } from "lucide-react";
+import { DownloadIcon, Loader2Icon, LogOutIcon, MonitorIcon, MoonIcon, RefreshCwIcon, SunIcon } from "lucide-react";
 
 import {
   AlertDialog,
@@ -17,11 +17,13 @@ import { Kbd } from "@/components/ui/kbd";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { useTheme, type Theme } from "@/hooks/use-theme";
 import { appVersion } from "@/lib/api";
 import { relativeTime } from "@/lib/dates";
 import { getPref, setPref } from "@/lib/prefs";
 import { useStore } from "@/lib/store";
+import { useUpdates } from "@/lib/updater";
 import { cn } from "@/lib/utils";
 import { ConnectForm } from "./connect-form";
 
@@ -182,6 +184,10 @@ export function SettingsDialog() {
 
           <Separator />
 
+          <UpdatesSection version={version} />
+
+          <Separator />
+
           <section className="grid gap-2">
             <h3 className="text-sm font-medium">Keyboard shortcuts</h3>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
@@ -194,7 +200,6 @@ export function SettingsDialog() {
             </div>
           </section>
 
-          <p className="text-muted-foreground pt-2 text-center text-xs">TasksNG {version}</p>
         </DialogContent>
       </Dialog>
 
@@ -222,5 +227,76 @@ export function SettingsDialog() {
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+function UpdatesSection({ version }: { version: string }) {
+  const { phase, version: next, progress, error, lastChecked, autoCheck, supported } = useUpdates();
+  if (!supported) {
+    return (
+      <section className="grid gap-1">
+        <h3 className="text-sm font-medium">Updates</h3>
+        <p className="text-muted-foreground text-xs">
+          You have version {version || "…"}. Automatic updates are available when TasksNG is installed with the setup
+          program; the portable version is updated by downloading a new copy.
+        </p>
+      </section>
+    );
+  }
+  const busy = phase === "checking" || phase === "downloading" || phase === "installing";
+
+  let status: string;
+  switch (phase) {
+    case "checking":
+      status = "Checking for updates…";
+      break;
+    case "downloading":
+      status = `Downloading version ${next}${progress != null ? ` · ${Math.round(progress * 100)}%` : "…"}`;
+      break;
+    case "ready":
+      status = `Version ${next} is ready to install.`;
+      break;
+    case "installing":
+      status = `Installing version ${next}…`;
+      break;
+    case "error":
+      status = `Couldn't check for updates: ${error}`;
+      break;
+    default:
+      status = lastChecked ? `Up to date · checked ${relativeTime(new Date(lastChecked).toISOString())}` : "Updates come from GitHub Releases.";
+  }
+
+  return (
+    <section className="grid gap-3">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-medium">Updates</h3>
+          <p className="text-muted-foreground mt-1 text-xs">
+            You have version {version || "…"}. <span className={phase === "error" ? "text-destructive" : ""}>{status}</span>
+          </p>
+        </div>
+        {phase === "ready" || phase === "installing" ? (
+          <Button size="sm" disabled={phase === "installing"} onClick={() => void useUpdates.getState().install()}>
+            {phase === "installing" ? <Loader2Icon className="animate-spin" /> : <DownloadIcon />}
+            Restart &amp; update
+          </Button>
+        ) : (
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => void useUpdates.getState().check(true)}>
+            {busy ? <Loader2Icon className="animate-spin" /> : <RefreshCwIcon />}
+            Check now
+          </Button>
+        )}
+      </div>
+      <div className="flex items-center gap-3">
+        <Switch
+          id="auto-update"
+          checked={autoCheck}
+          onCheckedChange={(on) => useUpdates.getState().setAutoCheck(on)}
+        />
+        <Label htmlFor="auto-update" className="font-normal">
+          Check for updates automatically
+        </Label>
+      </div>
+    </section>
   );
 }

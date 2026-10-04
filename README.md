@@ -33,6 +33,8 @@ A fast, keyboard-friendly task manager for Windows 10 and 11 that syncs with you
 - Password stored in Windows Credential Manager; trusts certificates in the Windows
   certificate store (option to accept self-signed certificates)
 - Basic **and** Digest authentication (Baikal's default)
+- Automatic updates: new releases are downloaded in the background, verified against the
+  app's signing key and installed after a restart (Settings → Updates)
 
 ### Keyboard shortcuts
 
@@ -61,7 +63,8 @@ Download the latest build from the **Actions** tab (artifact `TasksNG-windows-x6
 - `TasksNG_x.y.z_x64-setup.exe`: per-user installer, no admin rights needed (recommended)
 - `TasksNG_x.y.z_x64_en-US.msi`: per-machine installer for managed deployments
 - `TasksNG-portable.exe`: single executable, no installation (needs WebView2, which is
-  part of Windows 11 and of up-to-date Windows 10)
+  part of Windows 11 and of up-to-date Windows 10). The portable version doesn't update
+  itself; installed versions do.
 
 On first start, enter your Baikal address (e.g. `https://dav.example.com`), username and
 password. The app discovers your task lists automatically via `/.well-known/caldav` or
@@ -71,6 +74,15 @@ e.g. `https://example.com/baikal/html/dav.php`.
 Calendars that only allow events are not shown. In Baikal, a calendar's components are set
 in the admin panel (*Users and resources → Calendars*); new lists created from TasksNG are
 task-only calendars.
+
+## Updates
+
+Installed copies check `https://github.com/sshahs/tasksng/releases/latest/download/latest.json`
+shortly after start-up and every six hours (can be turned off in Settings). A newer version
+is downloaded in the background and only accepted if its signature matches the public key
+built into the app (`plugins.updater.pubkey` in `src-tauri/tauri.conf.json`). The user is then
+offered *Restart now*; the installer runs in passive mode and reopens TasksNG. Unsynced
+changes are written to disk before the installer starts.
 
 ## How it works
 
@@ -127,7 +139,31 @@ TASKSNG_TEST_URL=http://127.0.0.1:8801 cargo test -p tasks-core --test baikal --
 ```
 
 CI (`.github/workflows/build.yml`) runs all of the above and builds the Windows installers
-on `windows-latest`; pushing a tag like `v0.1.0` publishes a GitHub release.
+on `windows-latest` for every push.
+
+### Releases
+
+One-time setup: add the updater signing key as a repository secret named
+`TAURI_SIGNING_PRIVATE_KEY` (*Settings → Secrets and variables → Actions*). If the key has a
+password, also add `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Keep a backup of the key: installed
+copies only accept updates signed with it.
+
+To publish a release:
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+CI builds the installers with that version, signs them, generates `latest.json`
+(`scripts/updater-manifest.mjs`) and publishes everything as a GitHub release. Installed
+copies pick it up automatically. Tags must be plain `vX.Y.Z`; the MSI format doesn't allow
+pre-release suffixes.
+
+To use a different signing key, run `npx tauri signer generate -w tasksng.key`, put the
+contents of `tasksng.key.pub` into `plugins.updater.pubkey`, and store `tasksng.key` in the
+secret. Copies installed before the switch only accept updates signed with the old key, so
+they need to be updated by hand once.
 
 ### Project layout
 
@@ -139,6 +175,7 @@ src/                    React UI
   components/           app components (sidebar, task list, details, dialogs)
   lib/                  store, API bindings, date & quick-add parsing, view logic
 tools/baikal-dev-server Baikal-equivalent CalDAV server for development and tests
+scripts/                release helpers used by CI (version stamping, updater manifest)
 ```
 
 Data lives in `%APPDATA%\app.tasksng.desktop\tasks-cache.json`; logs are written to
