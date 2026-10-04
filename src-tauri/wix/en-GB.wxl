@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Makes the MSI British English (LCID 2057).
+  Tauri's bundler has no built-in en-GB entry (and WiX ships no en-GB UI
+  translation), so this file is registered under the en-US key in
+  tauri.conf.json and only overrides the package language; the installer
+  text falls back to WiX's standard English strings. CI renames the
+  resulting *_en-US.msi to *_en-GB.msi.
+-->
+<WixLocalization Culture="en-us" Codepage="1252" xmlns="http://schemas.microsoft.com/wix/2006/localization">
+  <String Id="TauriLanguage">2057</String>
+  <String Id="TauriCodepage">1252</String>
+</WixLocalization>

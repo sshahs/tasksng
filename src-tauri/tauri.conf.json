@@ -49,6 +49,13 @@
       "nsis": {
         "installMode": "currentUser",
         "displayLanguageSelector": false
+      },
+      "wix": {
+        "language": {
+          "en-US": {
+            "localePath": "wix/en-GB.wxl"
+          }
+        }
       }
     },
     "createUpdaterArtifacts": false

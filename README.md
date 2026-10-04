@@ -61,7 +61,8 @@ Download the latest build from the **Actions** tab (artifact `TasksNG-windows-x6
 **Releases** when a version is tagged:
 
 - `TasksNG_x.y.z_x64-setup.exe`: per-user installer, no admin rights needed (recommended)
-- `TasksNG_x.y.z_x64_en-US.msi`: per-machine installer for managed deployments
+- `TasksNG_x.y.z_x64_en-GB.msi`: per-machine installer for managed deployments (British
+  English)
 - `TasksNG-portable.exe`: single executable, no installation (needs WebView2, which is
   part of Windows 11 and of up-to-date Windows 10). The portable version doesn't update
   itself; installed versions do.

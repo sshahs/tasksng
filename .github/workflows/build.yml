@@ -111,6 +111,11 @@ jobs:
           cp target/release/tasksng.exe out/TasksNG-portable.exe
           if [[ -n "$RELEASE_TAG" ]]; then
             cp target/release/bundle/nsis/*-setup.exe.sig target/release/bundle/msi/*.msi.sig out/
+          fi
+          # The MSI is British English (src-tauri/wix/en-GB.wxl) but Tauri names
+          # it after its en-US config key.
+          for f in out/*_en-US.msi*; do mv "$f" "${f/_en-US/_en-GB}"; done
+          if [[ -n "$RELEASE_TAG" ]]; then
             node scripts/updater-manifest.mjs out
           fi
           ls -l out
