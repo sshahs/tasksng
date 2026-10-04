@@ -63,8 +63,23 @@ impl Reminder {
                     Related::Due => due.or(start),
                     Related::Start => start.or(due),
                 }?;
-                Some(anchor.instant() + chrono::Duration::seconds(*offset))
+                Some(offset_from(anchor, *offset))
             }
+        }
+    }
+}
+
+/// Applies a reminder offset the way iCalendar means it: whole days are
+/// calendar days, and for all-day or floating dates the rest is wall-clock
+/// time, so "on the day at 09:00" stays at 09:00 when the clocks change.
+fn offset_from(anchor: IcalTime, offset: i64) -> DateTime<Utc> {
+    let secs = chrono::Duration::seconds(offset);
+    match anchor {
+        IcalTime::Date(d) => IcalTime::Floating(d.and_time(chrono::NaiveTime::MIN) + secs).instant(),
+        IcalTime::Floating(dt) => IcalTime::Floating(dt + secs).instant(),
+        IcalTime::Utc(_) => {
+            let days = offset / 86_400;
+            anchor.add_days(days).instant() + chrono::Duration::seconds(offset - days * 86_400)
         }
     }
 }
@@ -347,6 +362,13 @@ mod tests {
         assert_eq!(at(Reminder::Relative { offset: -900, related: Related::Due }), "2026-10-05T13:45:00+00:00");
         assert_eq!(at(Reminder::Relative { offset: 0, related: Related::Start }), "2026-10-04T09:00:00+00:00");
         assert_eq!(at(Reminder::Absolute { at: "2026-10-01T08:00:00Z".into() }), "2026-10-01T08:00:00+00:00");
+        // All-day: wall-clock time on the day, in any time zone.
+        let all_day = Task { due: Some("2027-03-28".into()), ..Task::default() };
+        let nine = Reminder::Relative { offset: 9 * 3600, related: Related::Due }.fire_time(&all_day).unwrap();
+        assert_eq!(nine.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string(), "2027-03-28 09:00");
+        let before = Reminder::Relative { offset: -2 * 86_400 + 9 * 3600, related: Related::Due };
+        let before = before.fire_time(&Task { due: Some("2027-03-29".into()), ..Task::default() }).unwrap();
+        assert_eq!(before.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string(), "2027-03-27 09:00");
         let no_dates = Task::default();
         assert!(Reminder::Relative { offset: 0, related: Related::Due }.fire_time(&no_dates).is_none());
     }

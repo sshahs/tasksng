@@ -52,4 +52,24 @@ describe("markdown", () => {
     expect(toggleChecklistLine(md, 5).split("\n")[5]).toBe("- [ ] pay");
     expect(toggleChecklistLine(md, 0)).toBe(md);
   });
+
+  it("always finishes, whatever the input", () => {
+    const tricky = [
+      "# Heading\u2028more",
+      "#\tx",
+      "#\u00a0x",
+      "##",
+      "# ",
+      "- \n  -\n    - x",
+      "> \n>",
+      "```",
+      "1)\n2)",
+      "\u2029\u2029",
+      "*a **b* c**",
+      "[a](b",
+      "- [ ]",
+    ];
+    for (const t of tricky) expect(Array.isArray(parseMarkdown(t))).toBe(true);
+    expect(parseMarkdown("# Heading\u2028more").map((b) => b.type)).toEqual(["heading", "paragraph"]);
+  });
 });

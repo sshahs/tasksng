@@ -400,10 +400,13 @@ fn advance_recurrence(todo: &mut Component, now: DateTime<Utc>) -> Option<String
         (anchor, today)
     };
     let mut result = recur::advance(&rule, base, not_before);
+    let picks_days = recur::parse_rrule(&rule)
+        .is_some_and(|r| !r.byday.is_empty() || !r.bymonthday.is_empty() || !r.bysetpos.is_empty());
     if let Advance::Next { at, .. } = &result {
         // Completed early on a rule like "last Friday": move past the
-        // current occurrence rather than landing on it again.
-        if from_completion && at.local_date() == anchor.local_date() {
+        // current occurrence rather than landing on it again. Plain
+        // intervals ("3 days after completion") count from today as asked.
+        if from_completion && picks_days && at.local_date() == anchor.local_date() {
             result = recur::advance(&rule, anchor, anchor.local_date() + chrono::Duration::days(1));
         }
     }
@@ -609,6 +612,27 @@ mod tests {
         let patch = TaskPatch { rrule: Some(Some("FREQ=DAILY;INTERVAL=3".into())), ..Default::default() };
         let (out, _) = patch_ics(&out, &patch, now()).unwrap();
         assert!(!out.contains("X-TASKSNG-REPEAT-FROM"));
+    }
+
+    #[test]
+    fn repeat_after_completion_when_completed_early() {
+        let today = now().with_timezone(&Local).date_naive();
+        let day = |n: i64| (today + chrono::Duration::days(n)).format("%Y-%m-%d").to_string();
+        let ics = build_ics(
+            "u",
+            &NewTask {
+                summary: "x".into(),
+                due: Some(day(3)),
+                rrule: Some("FREQ=DAILY;INTERVAL=3;FROM=COMPLETION".into()),
+                ..Default::default()
+            },
+            now(),
+        )
+        .unwrap();
+        let patch = TaskPatch { status: Some(TaskStatus::Completed), ..Default::default() };
+        // Three days after completing it today, even though it was due then anyway.
+        let (_, outcome) = patch_ics(&ics, &patch, now()).unwrap();
+        assert_eq!(outcome, PatchOutcome::Advanced { due: day(3) });
     }
 
     #[test]

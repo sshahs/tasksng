@@ -164,7 +164,8 @@ export function parseQuickAdd(input: string, now = new Date()): QuickAddResult {
   const summary = text.replace(/\s+/g, " ").trim();
   if (!summary) return plain;
   if (!day && time) day = today;
-  if (!day && rrule) day = firstOccurrence(rrule, today);
+  // "every week from monday" starts the series on its start date.
+  if (!day && rrule) day = firstOccurrence(rrule, start ?? today);
   return {
     summary,
     due: day ? toDue(day, time) : null,

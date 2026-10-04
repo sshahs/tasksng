@@ -76,6 +76,11 @@ describe("parseQuickAdd", () => {
     const r = parseQuickAdd("Tax return starting mon due 2026-10-31 @pers", NOW);
     expect(r).toMatchObject({ summary: "Tax return", start: "2026-10-05", due: "2026-10-31", list: "pers" });
     expect(parseQuickAdd("Trip from next fri", NOW).start).toBe("2026-10-09");
+    expect(parseQuickAdd("Water plants every week from monday", NOW)).toMatchObject({
+      rrule: "FREQ=WEEKLY",
+      start: "2026-10-05",
+      due: "2026-10-05",
+    });
     expect(parseQuickAdd("Email bob@example.com", NOW).list).toBeNull();
     expect(parseQuickAdd("Start the project tomorrow", NOW)).toMatchObject({ summary: "Start the project", start: null, due: "2026-10-05" });
   });

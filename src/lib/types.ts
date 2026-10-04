@@ -132,6 +132,9 @@ export interface Settings {
   trayHintShown: boolean;
 }
 
+/** A change to settings: only the fields given are changed. */
+export type SettingsPatch = Partial<Omit<Settings, "trayHintShown">> & { launchAtLogin?: boolean };
+
 export interface SettingsView extends Settings {
   launchAtLogin: boolean;
   shortcutError: string | null;

@@ -15,7 +15,7 @@ use std::time::Duration;
 use notify::{Toast, ToastAction};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsPatch};
 use tasks_core::alarms::{Alarms, DueReminder};
 use tasks_core::dav::{normalize_url, Credentials, DavClient};
 use tasks_core::model::{NewTask, PatchOutcome, Task, TaskPatch, TaskStatus};
@@ -59,6 +59,7 @@ pub(crate) struct AppState {
     start_hidden: bool,
     pub(crate) quick_add_pending: AtomicBool,
     pub(crate) quick_add_loaded: AtomicBool,
+    pub(crate) quick_add_creating: AtomicBool,
 }
 
 impl AppState {
@@ -553,30 +554,31 @@ fn get_settings(app: AppHandle) -> SettingsView {
 }
 
 #[tauri::command]
-fn update_settings(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    settings: Settings,
-    launch_at_login: bool,
-) -> Result<SettingsView, String> {
-    let old = state.settings();
-    if old.quick_add_shortcut != settings.quick_add_shortcut {
-        let error = apply_shortcut(&app, settings.quick_add_shortcut.as_deref());
+fn update_settings(app: AppHandle, state: State<'_, AppState>, patch: SettingsPatch) -> Result<SettingsView, String> {
+    let (old, new) = {
+        let mut current = state.settings.lock().unwrap_or_else(|p| p.into_inner());
+        let old = current.clone();
+        current.apply(&patch);
+        (old, current.clone())
+    };
+    settings::save(&state.settings_path, &new);
+    if old.quick_add_shortcut != new.quick_add_shortcut {
+        let error = apply_shortcut(&app, new.quick_add_shortcut.as_deref());
         *state.shortcut_error.lock().unwrap_or_else(|p| p.into_inner()) = error;
-        if settings.quick_add_shortcut.is_some() {
+        if new.quick_add_shortcut.is_some() {
             quick_add::prepare(&app);
         }
     }
-    if settings.reminders && !old.reminders {
+    if new.reminders && !old.reminders {
         state.alarms.restart();
     }
-    let autolaunch = app.autolaunch();
-    if autolaunch.is_enabled().unwrap_or(false) != launch_at_login {
-        let res = if launch_at_login { autolaunch.enable() } else { autolaunch.disable() };
-        res.map_err(|e| format!("Couldn't change the start-up setting: {e}"))?;
+    if let Some(launch) = patch.launch_at_login {
+        let autolaunch = app.autolaunch();
+        if autolaunch.is_enabled().unwrap_or(false) != launch {
+            let res = if launch { autolaunch.enable() } else { autolaunch.disable() };
+            res.map_err(|e| format!("Couldn't change the start-up setting: {e}"))?;
+        }
     }
-    settings::save(&state.settings_path, &settings);
-    *state.settings.lock().unwrap_or_else(|p| p.into_inner()) = settings;
     Ok(settings_view(&app))
 }
 
@@ -855,6 +857,7 @@ pub fn run() {
                 start_hidden,
                 quick_add_pending: AtomicBool::new(false),
                 quick_add_loaded: AtomicBool::new(false),
+                quick_add_creating: AtomicBool::new(false),
             });
 
             let handle = app.handle().clone();
@@ -878,10 +881,7 @@ pub fn run() {
                 // Load the quick add window in the background so the
                 // shortcut opens it instantly.
                 if handle.state::<AppState>().settings().quick_add_shortcut.is_some() {
-                    let h = handle.clone();
-                    let _ = handle.run_on_main_thread(move || {
-                        quick_add::prepare(&h);
-                    });
+                    quick_add::prepare(&handle);
                 }
                 loop {
                     check_reminders(&handle);

@@ -27,6 +27,14 @@ describe("reminders", () => {
   it("computes fire times", () => {
     expect(reminderTime({ offset: 9 * 3600, related: "due" }, { due: "2026-10-05", start: null })).toEqual(new Date(2026, 9, 5, 9, 0));
     expect(reminderTime({ offset: 0, related: "due" }, { due: null, start: null })).toBeNull();
+    // Wall-clock times across a daylight-saving change (e.g. Europe on 28 March 2027).
+    expect(reminderTime({ offset: 9 * 3600, related: "due" }, { due: "2027-03-28", start: null })).toEqual(new Date(2027, 2, 28, 9, 0));
+    expect(reminderTime({ offset: -2 * 86400 + 9 * 3600, related: "due" }, { due: "2027-03-29", start: null })).toEqual(
+      new Date(2027, 2, 27, 9, 0),
+    );
+    const timed = new Date(2027, 2, 29, 10, 0);
+    const oneDayBefore = reminderTime({ offset: -86400, related: "due" }, { due: timed.toISOString(), start: null })!;
+    expect([oneDayBefore.getDate(), oneDayBefore.getHours()]).toEqual([28, 10]);
   });
 
   it("suggests presets that fit the task", () => {

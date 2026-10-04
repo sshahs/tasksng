@@ -5,7 +5,7 @@ import type {
   ConnectArgs,
   DeleteResult,
   NewTask,
-  Settings,
+  SettingsPatch,
   SettingsView,
   Snapshot,
   SyncOutcome,
@@ -75,8 +75,7 @@ export const api = {
   prepareForUpdate: () => call<void>("prepare_for_update"),
   updatesSupported: () => call<boolean>("updates_supported"),
   getSettings: () => call<SettingsView>("get_settings"),
-  updateSettings: (settings: Settings, launchAtLogin: boolean) =>
-    call<SettingsView>("update_settings", { settings, launchAtLogin }),
+  updateSettings: (patch: SettingsPatch) => call<SettingsView>("update_settings", { patch }),
   suspendShortcut: (suspend: boolean) => call<void>("suspend_shortcut", { suspend }),
   openLink: (url: string) => call<void>("open_link", { url }),
   reminderAction: (uid: string, action: "done" | "snooze" | "open", minutes?: number) =>

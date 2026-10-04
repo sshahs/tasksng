@@ -36,10 +36,19 @@ export function reminderTime(r: Reminder, task: Dates): Date | null {
     const d = new Date(r.at);
     return Number.isNaN(d.getTime()) ? null : d;
   }
-  const anchor = r.related === "start" ? (parseDue(task.start) ?? parseDue(task.due)) : (parseDue(task.due) ?? parseDue(task.start));
+  const field = r.related === "start" ? (task.start ?? task.due) : (task.due ?? task.start);
+  const anchor = parseDue(field);
   if (!anchor) return null;
-  const base = anchor.hasTime ? anchor.date : startOfDay(anchor.date);
-  return new Date(base.getTime() + r.offset * 1000);
+  // Whole days are calendar days; for all-day and floating dates the rest is
+  // wall-clock time too (the Date constructor normalises in local time).
+  if (!anchor.hasTime || !field!.endsWith("Z")) {
+    const b = anchor.hasTime ? anchor.date : startOfDay(anchor.date);
+    return new Date(b.getFullYear(), b.getMonth(), b.getDate(), b.getHours(), b.getMinutes(), b.getSeconds() + r.offset);
+  }
+  const days = Math.trunc(r.offset / DAY);
+  const d = new Date(anchor.date);
+  d.setDate(d.getDate() + days);
+  return new Date(d.getTime() + (r.offset - days * DAY) * 1000);
 }
 
 export function reminderLabel(r: Reminder, task: Dates, now = new Date()): string {

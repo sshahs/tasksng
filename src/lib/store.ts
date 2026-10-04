@@ -10,7 +10,7 @@ import type {
   ConnectArgs,
   DueReminder,
   NewTask,
-  Settings,
+  SettingsPatch,
   SettingsView,
   Snapshot,
   SyncStatus,
@@ -97,7 +97,7 @@ interface Actions {
   renameTag(from: string, to: string): Promise<void>;
   removeTag(tag: string): Promise<void>;
   loadSettings(): Promise<void>;
-  saveSettings(patch: Partial<Settings> & { launchAtLogin?: boolean }): Promise<void>;
+  saveSettings(patch: SettingsPatch): Promise<void>;
   /** Shows a task, switching to its list when the current view hides it. */
   openTask(id: string): void;
 }
@@ -489,8 +489,9 @@ export const useStore = create<Store>()((set, get) => {
       const name = to.trim().replace(/^#/, "");
       if (!name || name === from) return;
       const key = from.toLowerCase();
+      const readOnly = new Set(get().lists.filter((l) => l.readOnly).map((l) => l.id));
       const updates = Object.values(get().tasks)
-        .filter((t) => t.categories.some((c) => c.toLowerCase() === key))
+        .filter((t) => !readOnly.has(t.listId) && t.categories.some((c) => c.toLowerCase() === key))
         .map((t) => {
           const categories: string[] = [];
           for (const c of t.categories) {
@@ -505,8 +506,9 @@ export const useStore = create<Store>()((set, get) => {
 
     async removeTag(tag) {
       const key = tag.toLowerCase();
+      const readOnly = new Set(get().lists.filter((l) => l.readOnly).map((l) => l.id));
       const updates = Object.values(get().tasks)
-        .filter((t) => t.categories.some((c) => c.toLowerCase() === key))
+        .filter((t) => !readOnly.has(t.listId) && t.categories.some((c) => c.toLowerCase() === key))
         .map((t) => ({ id: t.id, patch: { categories: t.categories.filter((c) => c.toLowerCase() !== key) } }));
       await get().updateTasks(updates);
       if (tagOf(get().view)?.toLowerCase() === key) get().setView("today");
@@ -520,14 +522,16 @@ export const useStore = create<Store>()((set, get) => {
       }
     },
 
-    async saveSettings({ launchAtLogin, ...patch }) {
+    async saveSettings(patch) {
       const current = get().settings;
       if (!current) return;
-      const { launchAtLogin: wasLaunching, shortcutError: _e, nativeNotifications: _n, ...settings } = current;
+      // Show the change right away; the backend merges it and answers with the result.
+      set({ settings: { ...current, ...patch } });
       try {
-        set({ settings: await api.updateSettings({ ...settings, ...patch }, launchAtLogin ?? wasLaunching) });
+        set({ settings: await api.updateSettings(patch) });
       } catch (e) {
         fail(e);
+        void get().loadSettings();
       }
     },
 

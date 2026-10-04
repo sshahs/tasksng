@@ -45,8 +45,11 @@ export function safeHref(url: string): string | null {
   return null;
 }
 
+const HEADING = /^(#{1,3})[ \t]+(.*)$/;
+
 export function parseMarkdown(src: string): Block[] {
-  const lines = src.replace(/\r\n?/g, "\n").split("\n");
+  // Unicode line/paragraph separators count as line breaks too.
+  const lines = src.replace(/\r\n?|[\u2028\u2029\u0085]/g, "\n").split("\n");
   const blocks: Block[] = [];
   let i = 0;
   while (i < lines.length) {
@@ -63,7 +66,7 @@ export function parseMarkdown(src: string): Block[] {
       blocks.push({ type: "code", text: body.join("\n") });
       continue;
     }
-    const h = /^(#{1,3})\s+(.*)$/.exec(line);
+    const h = HEADING.exec(line);
     if (h) {
       blocks.push({ type: "heading", level: h[1].length as 1 | 2 | 3, children: parseInline(h[2].replace(/\s+#+\s*$/, "")) });
       i++;
@@ -86,12 +89,13 @@ export function parseMarkdown(src: string): Block[] {
       i = next;
       continue;
     }
-    const para: Inline[][] = [];
+    // A paragraph always takes at least this line, so parsing always moves on.
+    const para: Inline[][] = [parseInline(lines[i++])];
     while (
       i < lines.length &&
       lines[i].trim() &&
       !LIST_ITEM.test(lines[i]) &&
-      !/^(#{1,3})\s/.test(lines[i]) &&
+      !HEADING.test(lines[i]) &&
       !/^\s*(>|```)/.test(lines[i])
     ) {
       para.push(parseInline(lines[i++]));

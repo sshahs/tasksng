@@ -4,7 +4,7 @@
  */
 import { addDays, format } from "date-fns";
 
-import type { NewTask, Settings, SettingsView, Snapshot, SyncStatus, Task, TaskList, TaskPatch, TaskUpdate } from "./types";
+import type { NewTask, Settings, SettingsPatch, SettingsView, Snapshot, SyncStatus, Task, TaskList, TaskPatch, TaskUpdate } from "./types";
 
 type Handler = (payload: never) => void;
 
@@ -248,8 +248,9 @@ export function createMockBackend() {
     },
     get_settings: () => settingsView(),
     update_settings: (a) => {
-      settings = a.settings as Settings;
-      launchAtLogin = !!a.launchAtLogin;
+      const { launchAtLogin: launch, ...patch } = a.patch as SettingsPatch;
+      settings = { ...settings, ...patch };
+      if (launch !== undefined) launchAtLogin = launch;
       return settingsView();
     },
     suspend_shortcut: () => null,

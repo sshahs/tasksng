@@ -12,31 +12,35 @@ const WIDTH: f64 = 640.0;
 const HEIGHT: f64 = 132.0;
 
 /// Creates the (hidden) window ahead of time so the shortcut opens it
-/// instantly.
-pub fn prepare(app: &AppHandle) -> Option<WebviewWindow> {
-    if let Some(w) = app.get_webview_window(LABEL) {
-        return Some(w);
+/// instantly. Building a webview on the main thread from a command or event
+/// handler deadlocks on Windows (WebView2), so it is built from a separate
+/// thread; `quick_add_pending` makes it appear once it has loaded.
+pub fn prepare(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if app.get_webview_window(LABEL).is_some() || state.quick_add_creating.swap(true, Ordering::SeqCst) {
+        return;
     }
-    let built = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html".into()))
-        .title("Quick add · TasksNG")
-        .inner_size(WIDTH, HEIGHT)
-        .resizable(false)
-        .maximizable(false)
-        .minimizable(false)
-        .decorations(false)
-        .shadow(true)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .visible(false)
-        .focused(true)
-        .build();
-    match built {
-        Ok(w) => Some(w),
-        Err(e) => {
-            log::error!("creating the quick add window failed: {e}");
-            None
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let built = WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::App("index.html".into()))
+            .title("Quick add · TasksNG")
+            .inner_size(WIDTH, HEIGHT)
+            .resizable(false)
+            .maximizable(false)
+            .minimizable(false)
+            .decorations(false)
+            .shadow(true)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .visible(false)
+            .focused(true)
+            .build();
+        match built {
+            Ok(w) => place(&app, &w),
+            Err(e) => log::error!("creating the quick add window failed: {e}"),
         }
-    }
+        app.state::<AppState>().quick_add_creating.store(false, Ordering::SeqCst);
+    });
 }
 
 /// Centres the window near the top of the screen the mouse is on.
@@ -61,15 +65,21 @@ fn place(app: &AppHandle, window: &WebviewWindow) {
 pub fn show(app: &AppHandle) {
     log::info!("opening quick add");
     let state = app.state::<AppState>();
-    let fresh = app.get_webview_window(LABEL).is_none();
-    let Some(window) = prepare(app) else { return };
-    place(app, &window);
-    if fresh || !state.quick_add_loaded.load(Ordering::SeqCst) {
-        // Shown by `quick_add_ready` once the page has painted.
-        state.quick_add_pending.store(true, Ordering::SeqCst);
-        return;
+    match app.get_webview_window(LABEL) {
+        Some(window) if state.quick_add_loaded.load(Ordering::SeqCst) => {
+            place(app, &window);
+            reveal(&window);
+        }
+        Some(window) => {
+            // Shown by `ready` once the page has loaded.
+            place(app, &window);
+            state.quick_add_pending.store(true, Ordering::SeqCst);
+        }
+        None => {
+            state.quick_add_pending.store(true, Ordering::SeqCst);
+            prepare(app);
+        }
     }
-    reveal(&window);
 }
 
 fn reveal(window: &WebviewWindow) {
@@ -97,6 +107,7 @@ pub fn ready(app: &AppHandle) {
     state.quick_add_loaded.store(true, Ordering::SeqCst);
     if state.quick_add_pending.swap(false, Ordering::SeqCst) {
         if let Some(w) = app.get_webview_window(LABEL) {
+            place(app, &w);
             reveal(&w);
         }
     }
