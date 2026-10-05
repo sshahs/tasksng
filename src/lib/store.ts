@@ -1,7 +1,7 @@
 import { toast } from "sonner";
 import { create } from "zustand";
 
-import { api, on } from "./api";
+import { api, isWeb, on } from "./api";
 import { formatDue, parseDue } from "./dates";
 import { getPref, setPref } from "./prefs";
 import type { SortMode } from "./sort";
@@ -182,6 +182,17 @@ export const useStore = create<Store>()((set, get) => {
     }
   }
 
+  /** A browser notification, when the tab isn't in view and they're allowed. */
+  function browserNotification(r: DueReminder, open: () => void) {
+    if (!("Notification" in window) || Notification.permission !== "granted" || document.visibilityState === "visible") return;
+    const n = new Notification(r.title, { body: r.body, tag: `tasksng-${r.uid}` });
+    n.onclick = () => {
+      window.focus();
+      open();
+      n.close();
+    };
+  }
+
   function fail(e: unknown) {
     toast.error(e instanceof Error ? e.message : String(e));
   }
@@ -232,17 +243,19 @@ export const useStore = create<Store>()((set, get) => {
       await on<SyncStatus>("sync-status", (status) => set({ status }));
       await on<string[]>("notices", (notices) => notices.forEach((n) => toast.warning(n, { duration: 8000 })));
       await on<string>("open-task", (id) => get().openTask(id));
-      // Reminders shown inside the app when Windows notifications aren't available.
+      // Reminders shown inside the app when system notifications aren't
+      // available (and always in the web version).
       await on<DueReminder[]>("reminders", (due) =>
-        due.forEach((r) =>
+        due.forEach((r) => {
           toast(r.title, {
             id: `reminder-${r.uid}`,
             description: r.body,
             duration: Number.POSITIVE_INFINITY,
             action: { label: "Done", onClick: () => void api.reminderAction(r.uid, "done") },
             cancel: { label: "Snooze 10 min", onClick: () => void api.reminderAction(r.uid, "snooze", 10) },
-          }),
-        ),
+          });
+          if (isWeb) browserNotification(r, () => get().openTask(r.id));
+        }),
       );
       })();
       return initPromise;

@@ -1,0 +1,18 @@
+# TasksNG web version. Start with `docker compose up -d`, then open
+# http://localhost:8080 (put it behind HTTPS before using it over a network).
+services:
+  tasksng:
+    image: ghcr.io/sshahs/tasksng:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # Everyone signs in to this Baikal (or other CalDAV server).
+      TASKSNG_CALDAV_URL: https://dav.example.com
+    volumes:
+      - tasksng-data:/data
+      # Trust a private certificate authority:
+      # - ./my-ca.crt:/certs/my-ca.crt:ro
+
+volumes:
+  tasksng-data:

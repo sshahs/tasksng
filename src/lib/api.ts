@@ -19,6 +19,11 @@ type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 type Listen = <T>(event: string, handler: (payload: T) => void) => Promise<UnlistenFn>;
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+/**
+ * The self-hosted web version (tasksng-server). `npm run dev` uses the demo
+ * backend unless VITE_BACKEND=server.
+ */
+export const isWeb = !isTauri && (!import.meta.env.DEV || import.meta.env.VITE_BACKEND === "server");
 
 let backend: Promise<{ invoke: Invoke; listen: Listen }> | null = null;
 
@@ -31,12 +36,13 @@ function getBackend() {
           listen: ((event, handler) => tauriListen(event, (e) => handler(e.payload as never))) as Listen,
         };
       }
-      if (import.meta.env.DEV) {
-        // Browser preview (npm run dev): an in-memory backend with demo data.
-        const mock = await import("./mock-backend");
-        return mock.createMockBackend();
+      if (isWeb) {
+        const { createHttpBackend } = await import("./http-backend");
+        return createHttpBackend();
       }
-      throw new Error("TasksNG must run inside the desktop app");
+      // Browser preview (npm run dev): an in-memory backend with demo data.
+      const mock = await import("./mock-backend");
+      return mock.createMockBackend();
     })();
   }
   return backend;
@@ -108,10 +114,15 @@ export function windowLabel(): string {
       .__TAURI_INTERNALS__;
     return internals?.metadata?.currentWindow?.label ?? "main";
   }
+  if (isWeb) return "main";
   return new URLSearchParams(location.search).get("window") ?? "main";
 }
 
 export async function appVersion(): Promise<string> {
+  if (isWeb) {
+    const { serverInfo } = await import("./http-backend");
+    return (await serverInfo()).version;
+  }
   if (!isTauri) return "dev";
   const { getVersion } = await import("@tauri-apps/api/app");
   return getVersion();

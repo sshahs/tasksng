@@ -1,4 +1,4 @@
-//! App settings that the Rust side needs (the UI keeps its own view
+//! App settings kept by the backend (the UI keeps its own view
 //! preferences in local storage).
 
 use std::path::Path;
@@ -83,7 +83,7 @@ pub fn load(path: &Path) -> Settings {
 pub fn save(path: &Path, settings: &Settings) {
     match serde_json::to_vec_pretty(settings) {
         Ok(bytes) => {
-            if let Err(e) = tasks_core::store::write_atomic(path, &bytes) {
+            if let Err(e) = crate::store::write_atomic(path, &bytes) {
                 log::error!("saving settings failed: {e}");
             }
         }

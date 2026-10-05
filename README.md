@@ -5,16 +5,19 @@
 # TasksNG
 
 A keyboard-friendly task manager for your [Baikal](https://sabre.io/baikal/) server and other
-CalDAV servers built on sabre/dav. Runs on Windows 10 and 11 and on Linux, with a package for NixOS.
+CalDAV servers built on sabre/dav. Runs on Windows 10 and 11 and on Linux, with a package for NixOS,
+and as a self-hosted web app in Docker.
 
 [![Build](https://github.com/sshahs/tasksng/actions/workflows/build.yml/badge.svg)](https://github.com/sshahs/tasksng/actions/workflows/build.yml)
 [![Latest release](https://img.shields.io/github/v/release/sshahs/tasksng?label=release)](https://github.com/sshahs/tasksng/releases/latest)
 [![Nix flake](https://img.shields.io/badge/nix-flake-5277C3?logo=nixos&logoColor=white)](#nixos-and-nix)
-![Windows | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-informational)
+[![Docker](https://img.shields.io/badge/docker-ghcr.io-2496ED?logo=docker&logoColor=white)](#self-hosting-with-docker)
+![Windows | Linux | Web](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Web-informational)
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://v2.tauri.app/)
 
-[Install](#install) · [Features](#features) · [Shortcuts](#keyboard-shortcuts) ·
-[Linux notes](#running-on-linux) · [How it works](#how-it-works) · [Development](#development)
+[Install](#install) · [Docker](#self-hosting-with-docker) · [Features](#features) ·
+[Shortcuts](#keyboard-shortcuts) · [Linux notes](#running-on-linux) · [How it works](#how-it-works) ·
+[Development](#development)
 
 <img src="docs/screenshots/detail-light.png" width="860" alt="TasksNG showing the Today list with the details of a task open">
 
@@ -135,6 +138,64 @@ in your system configuration, or TasksNG keeps your password in a file only you 
 However you installed it, a new version starts the next time you start TasksNG, so quit the
 running copy from the tray menu or with <kbd>Ctrl</kbd>+<kbd>Q</kbd> after updating. See
 [Running on Linux](#running-on-linux) for keyrings, trays, notifications and Wayland.
+
+### Self-hosting with Docker
+
+The web version runs the same interface in a browser. A small server, `tasksng-server`, does
+the syncing with Baikal: you sign in with your Baikal username and password, and the server
+keeps a cache, settings and reminder state for each account separately. It suits a home server
+next to Baikal, so you can reach your tasks from any browser without installing anything.
+
+```sh
+docker run -d --name tasksng -p 8080:8080 \
+  -e TASKSNG_CALDAV_URL=https://dav.example.com \
+  -v tasksng-data:/data \
+  ghcr.io/sshahs/tasksng:latest
+```
+
+Then open http://localhost:8080. The image is built for `linux/amd64` and `linux/arm64` (a
+Raspberry Pi 4 or 5 works). [`docker-compose.yml`](docker-compose.yml) has the same setup for
+Docker Compose.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `TASKSNG_CALDAV_URL` | none | The Baikal (or other CalDAV) server everyone signs in to. The sign-in screen then only asks for a username and password. |
+| `TASKSNG_ALLOW_ANY_SERVER` | `false` | Lets people type any server address instead. Leave it off on anything reachable from the internet: the server connects to whatever address it is given. |
+| `TASKSNG_SECURE_COOKIE` | automatic | Marks the session cookie `Secure`. By default that happens when the request came over HTTPS, as reported by a reverse proxy in `X-Forwarded-Proto`. |
+| `TASKSNG_LISTEN` | `0.0.0.0:8080` | Address and port inside the container. |
+| `TASKSNG_DATA_DIR` | `/data` | Where accounts are stored. |
+| `RUST_LOG` | `info` | Log detail, such as `debug`. |
+
+Use HTTPS for anything beyond your own computer, because the browser sends your Baikal password
+to the server when you sign in. Put TasksNG behind a reverse proxy that terminates TLS and sets
+`X-Forwarded-Proto`, on its own host name (it doesn't support living under a sub path). With
+Caddy, that is one line:
+
+```text
+tasks.example.com {
+	reverse_proxy tasksng:8080
+}
+```
+
+The `/data` volume holds each account's task cache and its Baikal password, readable only by the
+container's user (uid 10001; with a bind mount instead of a volume, run `chown 10001` on the
+folder first). Back it up like any other secret, or don't back it up at all: the
+tasks live in Baikal, and signing in again rebuilds the cache. Sessions last 90 days. Signing out
+ends the account's sessions in every browser and deletes its stored password.
+
+If Baikal uses a certificate from a private certificate authority, mount the CA certificate (PEM,
+ending in `.crt`) into `/certs`, for example `-v ./my-ca.crt:/certs/my-ca.crt:ro`.
+
+Reminders appear in the open tab, and as browser notifications when the tab is in the background
+and you've allowed them (*Settings → Send a test notification* asks for permission). They need
+a TasksNG tab to be open somewhere; reminders missed in the meantime show up when you open one,
+if they're less than a day old. The tray icon, start at login and the global quick add shortcut
+are desktop features and don't exist in the browser.
+
+To update, pull the new image and recreate the container (`docker compose pull` and then
+`docker compose up -d`). `latest` follows the main branch, and releases from now on also get
+their version as a tag (`X.Y.Z` and `X.Y`). To build the image yourself, run
+`docker build -t tasksng .` in the repository.
 
 ### Connecting to Baikal
 
@@ -324,7 +385,8 @@ tasksng --version     print the version
 Installed Windows copies update themselves. They download new releases in the background, check
 them against the app's signing key and install them after a restart. *Settings → Updates* shows
 the state and lets you check by hand. The portable exe doesn't update, so download a new copy to
-upgrade it. Nix installs update through Nix, as described in [NixOS and Nix](#nixos-and-nix).
+upgrade it. Nix installs update through Nix, as described in [NixOS and Nix](#nixos-and-nix),
+and the web version updates when you pull a new image ([Self-hosting with Docker](#self-hosting-with-docker)).
 
 ## How it works
 
@@ -372,12 +434,21 @@ npm run app:build    # build installers (target/release/bundle)
 handy when you only work on the UI. Add `?setup` to the URL to see the sign-in screen; the demo
 password is `demo`. The screenshots in this README come from that demo.
 
+To work on the web version, run the server and point the dev UI at it:
+
+```sh
+TASKSNG_LISTEN=127.0.0.1:8080 TASKSNG_DATA_DIR=./.web-data TASKSNG_STATIC_DIR=./dist \
+  TASKSNG_CALDAV_URL=http://127.0.0.1:8800 cargo run -p tasks-server
+VITE_BACKEND=server npm run dev   # proxies /api to port 8080
+```
+
 ### Tests
 
 ```sh
 npm test                     # UI logic (quick add, views, search, sorting, drag and drop, Markdown, repeat rules)
 cargo test -p tasks-core     # iCalendar, recurrence, reminders, store, auth unit tests
 cargo test -p tasksng        # notification payloads, command line, password file (needs the Tauri build dependencies)
+cargo test -p tasks-server   # web server: sessions, cookies, security headers
 
 # End-to-end against a real sabre/dav server configured exactly like Baikal:
 cd tools/baikal-dev-server && composer install
@@ -386,11 +457,13 @@ BAIKAL_AUTH=Basic php -S 127.0.0.1:8801 router.php &  # Basic auth
 cd ../..
 TASKSNG_TEST_URL=http://127.0.0.1:8800 cargo test -p tasks-core --test baikal -- --test-threads=1
 TASKSNG_TEST_URL=http://127.0.0.1:8801 cargo test -p tasks-core --test baikal -- --test-threads=1
+TASKSNG_TEST_URL=http://127.0.0.1:8800 cargo test -p tasks-server   # the web API, signed in to the test server
 ```
 
 CI (`.github/workflows/build.yml`) runs all of these on every push. It also runs clippy on the
-Linux app, builds the Windows installers on `windows-latest`, and builds the Nix package and
-checks the NixOS module.
+Linux app and the server, builds the Windows installers on `windows-latest`, builds the Nix
+package and checks the NixOS module, and builds the Docker image for amd64 and arm64, starts it
+and publishes it to `ghcr.io/sshahs/tasksng` (from `main` and for releases).
 
 ### Nix
 
@@ -437,11 +510,13 @@ they need one update by hand.
 ```
 crates/tasks-core/      platform independent sync engine (Rust)
 src-tauri/              desktop shell: commands, background sync, credential storage, tray, notifications
+crates/tasks-server/    web version: HTTP API, sessions, live updates (Server-Sent Events)
 src/                    React UI
   components/ui/        shadcn/ui components
   components/           app components (sidebar, task list, details, dialogs)
   lib/                  store, API bindings, date & quick-add parsing, view logic
 nix/                    Nix package and NixOS module (flake.nix at the root)
+docker/                 container entrypoint (Dockerfile and docker-compose.yml at the root)
 tools/baikal-dev-server Baikal-equivalent CalDAV server for development and tests
 scripts/                release helpers used by CI (version stamping, updater manifest)
 docs/screenshots/       images used in this README
@@ -449,9 +524,9 @@ docs/screenshots/       images used in this README
 
 ### Where data lives
 
-| | Windows | Linux |
-| --- | --- | --- |
-| Tasks and pending changes (`tasks-cache.json`), `settings.json`, `reminders.json` | `%APPDATA%\app.tasksng.desktop\` | `~/.local/share/app.tasksng.desktop/` |
-| Logs | `%LOCALAPPDATA%\app.tasksng.desktop\logs\` | `~/.local/share/app.tasksng.desktop/logs/` |
+| | Windows | Linux | Docker |
+| --- | --- | --- | --- |
+| Tasks and pending changes (`tasks-cache.json`), `settings.json`, `reminders.json` | `%APPDATA%\app.tasksng.desktop\` | `~/.local/share/app.tasksng.desktop/` | `/data/users/<account>/` |
+| Logs | `%LOCALAPPDATA%\app.tasksng.desktop\logs\` | `~/.local/share/app.tasksng.desktop/logs/` | `docker logs` |
 
 Saved searches, sort orders and view preferences live in the app's web storage.

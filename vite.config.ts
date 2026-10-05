@@ -18,11 +18,14 @@ export default defineConfig({
     host: host || false,
     hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
     watch: { ignored: ["**/src-tauri/**", "**/crates/**", "**/tools/**"] },
+    // VITE_BACKEND=server npm run dev: the UI against a local tasksng-server.
+    proxy: { "/api": "http://127.0.0.1:8080" },
   },
   envPrefix: ["VITE_", "TAURI_ENV_*"],
   build: {
-    // WebView2 on Windows 10/11 is evergreen Chromium.
-    target: "chrome120",
+    // WebView2 (Chromium) on Windows, WebKitGTK on Linux, and current
+    // browsers for the web version.
+    target: ["chrome120", "firefox121", "safari17"],
     minify: !process.env.TAURI_ENV_DEBUG,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
     chunkSizeWarningLimit: 1024,

@@ -7,7 +7,6 @@ mod desktop;
 mod notify;
 mod quick_add;
 mod secrets;
-mod settings;
 mod tray;
 
 use std::path::PathBuf;
@@ -18,7 +17,7 @@ use std::time::Duration;
 use notify::{Toast, ToastAction};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsPatch};
+use tasks_core::settings::{self, Settings, SettingsPatch};
 use tasks_core::alarms::{Alarms, DueReminder};
 use tasks_core::dav::{normalize_url, Credentials, DavClient};
 use tasks_core::model::{NewTask, PatchOutcome, Task, TaskPatch, TaskStatus};

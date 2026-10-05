@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertCircleIcon, ChevronRightIcon, Loader2Icon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { isWeb } from "@/lib/api";
 import { isWindows } from "@/lib/platform";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -25,6 +26,20 @@ export function ConnectForm({
   const [advanced, setAdvanced] = useState(initial?.acceptInvalidCerts ?? false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The web version may be tied to one CalDAV server.
+  const [fixedServer, setFixedServer] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isWeb) return;
+    void import("@/lib/http-backend").then(({ serverInfo }) =>
+      serverInfo().then((info) => {
+        if (info.caldavUrl) {
+          setFixedServer(info.caldavUrl);
+          setServerUrl(info.caldavUrl);
+        }
+      }),
+    );
+  }, []);
 
   const submit = async () => {
     setBusy(true);
@@ -47,23 +62,29 @@ export function ConnectForm({
         void submit();
       }}
     >
-      <div className="grid gap-2">
-        <Label htmlFor="server">Server address</Label>
-        <Input
-          id="server"
-          value={serverUrl}
-          onChange={(e) => setServerUrl(e.target.value)}
-          placeholder="https://dav.example.com"
-          autoFocus={!initial}
-          autoComplete="url"
-          spellCheck={false}
-          required
-        />
-        <p className="text-muted-foreground text-xs">
-          Your Baikal address. If it isn&apos;t found automatically, use the full URL ending in{" "}
-          <code className="bg-muted rounded px-1">/dav.php</code>.
+      {fixedServer ? (
+        <p className="text-muted-foreground text-sm">
+          Sign in with your account on <span className="text-foreground font-medium">{hostOf(fixedServer)}</span>.
         </p>
-      </div>
+      ) : (
+        <div className="grid gap-2">
+          <Label htmlFor="server">Server address</Label>
+          <Input
+            id="server"
+            value={serverUrl}
+            onChange={(e) => setServerUrl(e.target.value)}
+            placeholder="https://dav.example.com"
+            autoFocus={!initial}
+            autoComplete="url"
+            spellCheck={false}
+            required
+          />
+          <p className="text-muted-foreground text-xs">
+            Your Baikal address. If it isn&apos;t found automatically, use the full URL ending in{" "}
+            <code className="bg-muted rounded px-1">/dav.php</code>.
+          </p>
+        </div>
+      )}
       <div className="grid gap-2">
         <Label htmlFor="username">Username</Label>
         <Input
@@ -71,6 +92,7 @@ export function ConnectForm({
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           autoComplete="username"
+          autoFocus={!!fixedServer && !initial}
           spellCheck={false}
           required
         />
@@ -102,7 +124,9 @@ export function ConnectForm({
           <div className="grid gap-1">
             <Label htmlFor="insecure">Accept invalid TLS certificates</Label>
             <p className="text-muted-foreground text-xs">
-              {isWindows
+              {isWeb
+                ? "Only for self-signed certificates on your own network. Prefer mounting your CA certificate into the TasksNG container instead (see the README)."
+                : isWindows
                 ? "Only for self-signed certificates on your own network. Prefer installing your CA certificate in Windows instead — the app trusts the Windows certificate store."
                 : "Only for self-signed certificates on your own network. Prefer adding your CA certificate to the system's trusted certificates instead (on NixOS: security.pki.certificateFiles)."}
             </p>
@@ -122,10 +146,20 @@ export function ConnectForm({
         {busy ? "Connecting…" : submitLabel}
       </Button>
       <p className="text-muted-foreground text-center text-xs">
-        {isWindows
-          ? "Your password is stored securely in Windows Credential Manager."
-          : "Your password is stored in your desktop's keyring (GNOME Keyring, KWallet, KeePassXC…)."}
+        {isWeb
+          ? "Your password is stored on this TasksNG server, which syncs with Baikal for you."
+          : isWindows
+            ? "Your password is stored securely in Windows Credential Manager."
+            : "Your password is stored in your desktop's keyring (GNOME Keyring, KWallet, KeePassXC…)."}
       </p>
     </form>
   );
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
 }

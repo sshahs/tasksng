@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { useTheme, type Theme } from "@/hooks/use-theme";
-import { api, appVersion, isTauri } from "@/lib/api";
+import { api, appVersion, isTauri, isWeb } from "@/lib/api";
 import { relativeTime } from "@/lib/dates";
 import { isWindows, superKey } from "@/lib/platform";
 import { getPref, setPref } from "@/lib/prefs";
@@ -205,7 +205,7 @@ export function SettingsDialog() {
           <section className="grid gap-2">
             <h3 className="text-sm font-medium">Keyboard shortcuts</h3>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
-              {SHORTCUTS.map(([k, label]) => (
+              {SHORTCUTS.filter(([, label]) => !isWeb || (label !== "Quick add anywhere" && label !== "Quit TasksNG")).map(([k, label]) => (
                 <div key={k} className="flex items-center justify-between gap-2">
                   <span className="text-muted-foreground truncate">{label}</span>
                   <Kbd className="shrink-0 whitespace-nowrap">{k}</Kbd>
@@ -278,10 +278,12 @@ function BackgroundSection() {
   if (!settings) return null;
   const save = (patch: Parameters<ReturnType<typeof useStore.getState>["saveSettings"]>[0]) => void useStore.getState().saveSettings(patch);
   const defaultValue = DEFAULT_REMINDERS.find((d) => d.offset === settings.defaultReminder)?.value ?? "off";
+  // The web version has no tray, autostart or global shortcut.
+  const web = settings.platform?.os === "web";
 
   return (
     <section className="grid gap-4">
-      <h3 className="text-sm font-medium">Reminders &amp; background</h3>
+      <h3 className="text-sm font-medium">{web ? "Reminders" : "Reminders & background"}</h3>
       <SettingRow
         id="reminders"
         label="Show reminders"
@@ -310,7 +312,7 @@ function BackgroundSection() {
           </SelectContent>
         </Select>
       </div>
-      {settings.nativeNotifications && (
+      {(settings.nativeNotifications || web) && (
         <div className="pl-12">
           <Button
             variant="outline"
@@ -324,60 +326,66 @@ function BackgroundSection() {
           </Button>
         </div>
       )}
-      <SettingRow
-        id="close-to-tray"
-        label={isWindows ? "Keep running in the notification area when closed" : "Keep running in the background when closed"}
-        hint={
-          isWindows
-            ? "Reminders and quick add keep working. Quit from the TasksNG icon next to the clock."
-            : settings.platform?.tray
-              ? "Reminders and quick add keep working. Quit from the TasksNG tray icon."
-              : "Reminders and quick add keep working. Open TasksNG again from your app launcher; quit with Ctrl+Q."
-        }
-        checked={settings.closeToTray}
-        onChange={(closeToTray) => save({ closeToTray })}
-      />
-      <SettingRow
-        id="autostart"
-        label={isWindows ? "Start TasksNG when you sign in to Windows" : "Start TasksNG when you log in"}
-        hint={settings.platform?.autostartError ?? (isWindows ? "Starts quietly in the notification area." : "Starts quietly in the background.")}
-        checked={settings.launchAtLogin}
-        disabled={!isTauri || (!!settings.platform?.autostartError && !settings.launchAtLogin)}
-        onChange={(launchAtLogin) => save({ launchAtLogin })}
-      />
-      <div className="grid gap-2">
-        <SettingRow
-          id="quick-add-shortcut"
-          label="Quick add from anywhere"
-          hint="Opens a small box for a new task on top of whatever you're doing."
-          checked={settings.quickAddShortcut !== null}
-          onChange={(on) => save({ quickAddShortcut: on ? "Super+Alt+N" : null })}
-        />
-        {settings.quickAddShortcut !== null && (
-          <div className="flex items-center gap-3 pl-12">
-            <ShortcutRecorder value={settings.quickAddShortcut} onChange={(quickAddShortcut) => save({ quickAddShortcut })} />
+      {!web && (
+        <>
+          <SettingRow
+            id="close-to-tray"
+            label={isWindows ? "Keep running in the notification area when closed" : "Keep running in the background when closed"}
+            hint={
+              isWindows
+                ? "Reminders and quick add keep working. Quit from the TasksNG icon next to the clock."
+                : settings.platform?.tray
+                  ? "Reminders and quick add keep working. Quit from the TasksNG tray icon."
+                  : "Reminders and quick add keep working. Open TasksNG again from your app launcher; quit with Ctrl+Q."
+            }
+            checked={settings.closeToTray}
+            onChange={(closeToTray) => save({ closeToTray })}
+          />
+          <SettingRow
+            id="autostart"
+            label={isWindows ? "Start TasksNG when you sign in to Windows" : "Start TasksNG when you log in"}
+            hint={settings.platform?.autostartError ?? (isWindows ? "Starts quietly in the notification area." : "Starts quietly in the background.")}
+            checked={settings.launchAtLogin}
+            disabled={!isTauri || (!!settings.platform?.autostartError && !settings.launchAtLogin)}
+            onChange={(launchAtLogin) => save({ launchAtLogin })}
+          />
+          <div className="grid gap-2">
+            <SettingRow
+              id="quick-add-shortcut"
+              label="Quick add from anywhere"
+              hint="Opens a small box for a new task on top of whatever you're doing."
+              checked={settings.quickAddShortcut !== null}
+              onChange={(on) => save({ quickAddShortcut: on ? "Super+Alt+N" : null })}
+            />
+            {settings.quickAddShortcut !== null && (
+              <div className="flex items-center gap-3 pl-12">
+                <ShortcutRecorder value={settings.quickAddShortcut} onChange={(quickAddShortcut) => save({ quickAddShortcut })} />
+              </div>
+            )}
+            {settings.shortcutError && <p className="text-destructive pl-12 text-xs">{settings.shortcutError}</p>}
+            {settings.platform?.wayland && settings.quickAddShortcut !== null && (
+              <div className="flex items-center gap-2 pl-12">
+                <code className="bg-muted rounded px-1.5 py-0.5 text-xs">tasksng --quick-add</code>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void navigator.clipboard.writeText("tasksng --quick-add").then(() => toast.success("Copied"))}
+                >
+                  Copy command
+                </Button>
+              </div>
+            )}
           </div>
-        )}
-        {settings.shortcutError && <p className="text-destructive pl-12 text-xs">{settings.shortcutError}</p>}
-        {settings.platform?.wayland && settings.quickAddShortcut !== null && (
-          <div className="flex items-center gap-2 pl-12">
-            <code className="bg-muted rounded px-1.5 py-0.5 text-xs">tasksng --quick-add</code>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => void navigator.clipboard.writeText("tasksng --quick-add").then(() => toast.success("Copied"))}
-            >
-              Copy command
-            </Button>
-          </div>
-        )}
-      </div>
+        </>
+      )}
     </section>
   );
 }
 
 function updatesHint(installKind: string | undefined): string {
   switch (installKind) {
+    case "server":
+      return "This copy runs on a server: update it by pulling the new Docker image (docker compose pull, then docker compose up -d).";
     case "nix":
       return "This copy is managed by Nix: update it with nixos-rebuild, home-manager or nix profile upgrade.";
     case "appimage":
@@ -389,6 +397,9 @@ function updatesHint(installKind: string | undefined): string {
 }
 
 function reminderHint(settings: SettingsView): string {
+  if (settings.platform?.os === "web") {
+    return "In this tab while it's open, and as browser notifications when it's in the background (if you allow them).";
+  }
   if (!settings.nativeNotifications) {
     return isWindows
       ? "Inside the app (Windows notifications need the desktop app on Windows)."

@@ -8,6 +8,7 @@ pub mod ical;
 pub mod model;
 pub mod recur;
 pub mod reminders;
+pub mod settings;
 pub mod store;
 pub mod sync;
 

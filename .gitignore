@@ -10,3 +10,6 @@ src-tauri/tauri.ci.conf.json
 
 # nix build
 /result
+
+# tasks-server during development
+/.web-data
