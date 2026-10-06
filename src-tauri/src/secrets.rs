@@ -4,6 +4,8 @@
 //! - Linux: the desktop's Secret Service (GNOME Keyring, KWallet, KeePassXC).
 //!   Without one, the password goes to a file readable only by the user, and
 //!   moves into the keyring as soon as one is available.
+//! - Android: a file in the app's private storage, which other apps can't
+//!   read.
 //! - Elsewhere (development only): that same file.
 //!
 //! All functions may block (D-Bus, keyring unlock prompts): call them off
@@ -19,9 +21,13 @@ const SERVICE: &str = "TasksNG";
 /// Where a saved password ended up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stored {
+    #[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
     Keyring,
     /// No keyring available: a file only the user can read.
     File,
+    /// Android: the app's private storage.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    AppStorage,
 }
 
 fn account_key(server: &str, username: &str) -> String {
@@ -129,7 +135,8 @@ pub fn save(dir: &Path, server: &str, username: &str, password: &str) -> Result<
 #[cfg(not(any(windows, target_os = "linux")))]
 pub fn save(dir: &Path, server: &str, username: &str, password: &str) -> Result<Stored, String> {
     let _ = SERVICE;
-    save_file(dir, account_key(server, username), password)
+    let stored = save_file(dir, account_key(server, username), password)?;
+    Ok(if cfg!(target_os = "android") { Stored::AppStorage } else { stored })
 }
 
 /// The saved password, if there is one. Fails when the keyring is locked

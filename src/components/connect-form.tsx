@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { isWeb } from "@/lib/api";
-import { isWindows } from "@/lib/platform";
+import { isAndroid, isWindows } from "@/lib/platform";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -126,6 +126,8 @@ export function ConnectForm({
             <p className="text-muted-foreground text-xs">
               {isWeb
                 ? "Only for self-signed certificates on your own network. Prefer mounting your CA certificate into the TasksNG container instead (see the README)."
+                : isAndroid
+                ? "Only for self-signed certificates on your own network. TasksNG trusts the certificate authorities that come with Android, not ones you installed yourself."
                 : isWindows
                 ? "Only for self-signed certificates on your own network. Prefer installing your CA certificate in Windows instead — the app trusts the Windows certificate store."
                 : "Only for self-signed certificates on your own network. Prefer adding your CA certificate to the system's trusted certificates instead (on NixOS: security.pki.certificateFiles)."}
@@ -148,7 +150,9 @@ export function ConnectForm({
       <p className="text-muted-foreground text-center text-xs">
         {isWeb
           ? "Your password is stored on this TasksNG server, which syncs with Baikal for you."
-          : isWindows
+          : isAndroid
+            ? "Your password is stored in TasksNG's private storage on this device."
+            : isWindows
             ? "Your password is stored securely in Windows Credential Manager."
             : "Your password is stored in your desktop's keyring (GNOME Keyring, KWallet, KeePassXC…)."}
       </p>

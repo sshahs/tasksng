@@ -3,6 +3,7 @@ import { create } from "zustand";
 
 import { api, isWeb, on } from "./api";
 import { formatDue, parseDue } from "./dates";
+import { isAndroid } from "./platform";
 import { getPref, setPref } from "./prefs";
 import type { SortMode } from "./sort";
 import type {
@@ -46,6 +47,13 @@ interface State {
   showCompleted: boolean;
   collapsed: Record<string, boolean>;
   sidebarOpen: boolean;
+  /** Phone layout: the lists slide in over the tasks. */
+  drawerOpen: boolean;
+  /**
+   * Phone layout: the selected task's details cover the screen. Tapping a
+   * task opens them; long-pressing only selects it for the menu.
+   */
+  detailOpen: boolean;
   /** Bumped to ask the quick-add field to take focus. */
   focusQuickAdd: number;
   focusSearch: number;
@@ -73,6 +81,8 @@ interface Actions {
   applySnapshot(s: Snapshot, force?: boolean): void;
   setView(view: ViewId): void;
   select(id: string | null): void;
+  /** Selects a task and shows its details (also on phones). */
+  openDetail(id: string): void;
   set(partial: Partial<State>): void;
   toggleCollapsed(uid: string): void;
   sync(manual?: boolean): Promise<void>;
@@ -215,6 +225,8 @@ export const useStore = create<Store>()((set, get) => {
     showCompleted: getPref("show-completed", false),
     collapsed: getPref<Record<string, boolean>>("collapsed", {}),
     sidebarOpen: getPref("sidebar", true),
+    drawerOpen: false,
+    detailOpen: false,
     focusQuickAdd: 0,
     focusSearch: 0,
     focusTitle: 0,
@@ -272,6 +284,7 @@ export const useStore = create<Store>()((set, get) => {
       }
       const tasks = mergeTasks(state.tasks, s.tasks);
       const selectedId = state.selectedId && tasks[state.selectedId] ? state.selectedId : null;
+      const detailOpen = state.detailOpen && !!selectedId;
       set({
         revision: s.revision,
         account: s.account,
@@ -281,16 +294,21 @@ export const useStore = create<Store>()((set, get) => {
         tasks,
         lastSync: s.lastSync,
         selectedId,
+        detailOpen,
       });
     },
 
     setView(view) {
       setPref("view", view);
-      set({ view, selectedId: null, search: "" });
+      set({ view, selectedId: null, detailOpen: false, drawerOpen: false, search: "" });
     },
 
     select(id) {
-      set({ selectedId: id });
+      set(id ? { selectedId: id } : { selectedId: null, detailOpen: false });
+    },
+
+    openDetail(id) {
+      set({ selectedId: id, detailOpen: true });
     },
 
     set(partial) {
@@ -317,7 +335,7 @@ export const useStore = create<Store>()((set, get) => {
         if (manual && out.error) {
           if (get().status.state === "offline") {
             toast.warning("Can't reach your Baikal server", {
-              description: "Your changes are kept on this PC and sync automatically when it's back.",
+              description: `Your changes are kept on this ${isAndroid ? "device" : "PC"} and sync automatically when it's back.`,
             });
           } else {
             toast.error(out.error);
@@ -557,7 +575,7 @@ export const useStore = create<Store>()((set, get) => {
         set({ view: `list:${t.listId}`, search: "" });
       }
       if (t.completed && !get().showCompleted) get().set({ showCompleted: true });
-      set({ selectedId: id });
+      set({ selectedId: id, detailOpen: true, drawerOpen: false });
     },
 
     async deleteList(id) {

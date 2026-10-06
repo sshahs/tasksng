@@ -121,6 +121,10 @@
     overflow: hidden;
     user-select: none;
     -webkit-user-select: none;
+    /* Touch screens: no grey flash on tap, no rubber band, no double-tap zoom. */
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+    touch-action: manipulation;
   }
   input,
   textarea,

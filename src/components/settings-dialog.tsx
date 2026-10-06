@@ -22,7 +22,7 @@ import { Switch } from "@/components/ui/switch";
 import { useTheme, type Theme } from "@/hooks/use-theme";
 import { api, appVersion, isTauri, isWeb } from "@/lib/api";
 import { relativeTime } from "@/lib/dates";
-import { isWindows, superKey } from "@/lib/platform";
+import { isAndroid, isWindows, superKey } from "@/lib/platform";
 import { getPref, setPref } from "@/lib/prefs";
 import { DEFAULT_REMINDERS } from "@/lib/reminders";
 import { useStore } from "@/lib/store";
@@ -166,7 +166,7 @@ export function SettingsDialog() {
 
           <Separator />
 
-          <section className="flex items-center justify-between gap-4">
+          <section className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <div>
               <Label>Sync automatically</Label>
               <p className="text-muted-foreground mt-1 text-xs">Changes you make are always sent right away.</p>
@@ -200,19 +200,21 @@ export function SettingsDialog() {
 
           <UpdatesSection version={version} />
 
-          <Separator />
+          {!isAndroid && <Separator />}
 
-          <section className="grid gap-2">
-            <h3 className="text-sm font-medium">Keyboard shortcuts</h3>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
-              {SHORTCUTS.filter(([, label]) => !isWeb || (label !== "Quick add anywhere" && label !== "Quit TasksNG")).map(([k, label]) => (
-                <div key={k} className="flex items-center justify-between gap-2">
-                  <span className="text-muted-foreground truncate">{label}</span>
-                  <Kbd className="shrink-0 whitespace-nowrap">{k}</Kbd>
-                </div>
-              ))}
-            </div>
-          </section>
+          {!isAndroid && (
+            <section className="grid gap-2">
+              <h3 className="text-sm font-medium">Keyboard shortcuts</h3>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
+                {SHORTCUTS.filter(([, label]) => !isWeb || (label !== "Quick add anywhere" && label !== "Quit TasksNG")).map(([k, label]) => (
+                  <div key={k} className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground truncate">{label}</span>
+                    <Kbd className="shrink-0 whitespace-nowrap">{k}</Kbd>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
 
         </DialogContent>
       </Dialog>
@@ -278,12 +280,13 @@ function BackgroundSection() {
   if (!settings) return null;
   const save = (patch: Parameters<ReturnType<typeof useStore.getState>["saveSettings"]>[0]) => void useStore.getState().saveSettings(patch);
   const defaultValue = DEFAULT_REMINDERS.find((d) => d.offset === settings.defaultReminder)?.value ?? "off";
-  // The web version has no tray, autostart or global shortcut.
+  // The web version and Android have no tray, autostart or global shortcut.
   const web = settings.platform?.os === "web";
+  const desktop = !web && settings.platform?.os !== "android";
 
   return (
     <section className="grid gap-4">
-      <h3 className="text-sm font-medium">{web ? "Reminders" : "Reminders & background"}</h3>
+      <h3 className="text-sm font-medium">{desktop ? "Reminders & background" : "Reminders"}</h3>
       <SettingRow
         id="reminders"
         label="Show reminders"
@@ -291,7 +294,7 @@ function BackgroundSection() {
         checked={settings.reminders}
         onChange={(reminders) => save({ reminders })}
       />
-      <div className="flex items-center justify-between gap-4 pl-12">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 pl-12">
         <Label className="text-muted-foreground font-normal" title="For tasks with a due time and no reminder of their own">
           Automatic reminder
         </Label>
@@ -326,7 +329,7 @@ function BackgroundSection() {
           </Button>
         </div>
       )}
-      {!web && (
+      {desktop && (
         <>
           <SettingRow
             id="close-to-tray"
@@ -388,6 +391,8 @@ function updatesHint(installKind: string | undefined): string {
       return "This copy runs on a server: update it by pulling the new Docker image (docker compose pull, then docker compose up -d).";
     case "nix":
       return "This copy is managed by Nix: update it with nixos-rebuild, home-manager or nix profile upgrade.";
+    case "android":
+      return "To update, install the APK of a newer release from GitHub over this one.";
     case "appimage":
     case "system":
       return "Update it the way you installed it, e.g. with your package manager.";
@@ -406,6 +411,9 @@ function reminderHint(settings: SettingsView): string {
       : "Inside the app (no notification service is running).";
   }
   if (isWindows) return "As Windows notifications with Snooze and Done buttons.";
+  if (settings.platform?.os === "android") {
+    return "As Android notifications with Snooze and Done buttons, also while TasksNG is closed.";
+  }
   return settings.platform?.notificationActions
     ? "As desktop notifications with Snooze and Done buttons."
     : "As desktop notifications.";

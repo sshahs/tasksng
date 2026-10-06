@@ -13,7 +13,11 @@ chrono.workspace = true
 log.workspace = true
 chrono-tz = "0.10"
 quick-xml = "0.42"
-reqwest = { version = "0.13", default-features = false, features = ["native-tls", "charset", "gzip", "http2", "system-proxy"] }
+reqwest = { version = "0.13", default-features = false, features = ["charset", "gzip", "http2", "system-proxy"] }
+# Android: rustls with ring, and the system's certificate authorities (see
+# dav::android_roots). There is no system OpenSSL to link against there.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"], optional = true }
+webpki-root-certs = { version = "1", optional = true }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 md-5 = "0.10"
@@ -21,6 +25,12 @@ sha2 = "0.10"
 base64 = "0.22"
 rand = "0.9"
 percent-encoding = "2"
+
+[features]
+# Windows' SChannel and certificate store, OpenSSL on Linux.
+default = ["native-tls"]
+native-tls = ["reqwest/native-tls"]
+rustls = ["reqwest/rustls-no-provider", "dep:rustls", "dep:webpki-root-certs"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }

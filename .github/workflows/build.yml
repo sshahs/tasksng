@@ -56,7 +56,10 @@ jobs:
           npm run build
 
       - name: Core unit tests
-        run: cargo test -p tasks-core
+        run: |
+          cargo test -p tasks-core
+          # The TLS setup the Android app uses.
+          cargo test -p tasks-core --no-default-features --features rustls --lib
 
       - name: End-to-end tests against a Baikal (sabre/dav) server
         working-directory: tools/baikal-dev-server
@@ -114,6 +117,106 @@ jobs:
         run: |
           cargo build -p tasksng
           env -i target/debug/tasksng --version | grep -F "$(node -p 'require("./src-tauri/tauri.conf.json").version')"
+
+  android:
+    name: Android app
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+
+      # The runner comes with the Android SDK and NDK.
+      - name: Android NDK
+        run: echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Clippy (Android)
+        run: |
+          ndk_bin="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          CC_aarch64_linux_android="$ndk_bin/aarch64-linux-android26-clang" AR_aarch64_linux_android="$ndk_bin/llvm-ar" \
+            cargo clippy -p tasksng --target aarch64-linux-android -- -D warnings
+
+      # Releases are signed with the app's own key, so installed copies can be
+      # updated by installing the next APK. Other builds use the debug key.
+      - name: Signing key
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [[ -z "$ANDROID_KEYSTORE" ]]; then
+            if [[ -n "$RELEASE_TAG" ]]; then
+              echo "::error::Android releases must be signed. Add the ANDROID_KEYSTORE, ANDROID_KEYSTORE_PASSWORD and ANDROID_KEY_ALIAS secrets. See README → Releases."
+              exit 1
+            fi
+            echo "No signing key: the APK is signed with a debug key."
+            exit 0
+          fi
+          cd src-tauri/gen/android
+          echo "$ANDROID_KEYSTORE" | base64 -d > release.jks
+          printf 'storeFile=release.jks\npassword=%s\nkeyAlias=%s\n' "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" > keystore.properties
+
+      - name: Build the APK
+        run: |
+          if [[ -n "$RELEASE_TAG" ]]; then
+            echo "{\"version\": \"${RELEASE_TAG#v}\"}" > src-tauri/tauri.ci.conf.json
+          else
+            echo "{}" > src-tauri/tauri.ci.conf.json
+          fi
+          npx tauri android build --ci --apk --target aarch64 armv7 x86_64 --config src-tauri/tauri.ci.conf.json
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p out
+          version="${RELEASE_TAG#v}"; version="${version:-$(node -p 'require("./src-tauri/tauri.conf.json").version')}"
+          cp src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk "out/TasksNG_${version}_android.apk"
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TasksNG-android
+          path: out/*
+          if-no-files-found: error
+
+  # After the Windows job, which creates the release.
+  android-release:
+    name: Publish Android app
+    needs: [android, windows]
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_version != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: TasksNG-android
+          path: out
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          name: TasksNG ${{ env.RELEASE_TAG }}
+          files: out/*
 
   nix:
     name: Nix flake (${{ matrix.system }})

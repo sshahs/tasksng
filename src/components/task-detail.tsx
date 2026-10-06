@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowLeftIcon,
   BellIcon,
   CalendarIcon,
   CircleDashedIcon,
@@ -29,6 +30,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { formatTimestamp } from "@/lib/dates";
 import { toggleChecklistLine } from "@/lib/markdown";
 import { describeRule } from "@/lib/rrule";
@@ -48,17 +50,21 @@ import { TagInput } from "./tag-input";
 export function TaskDetail() {
   const selectedId = useStore((s) => s.selectedId);
   const task = useStore((s) => (s.selectedId ? s.tasks[s.selectedId] : undefined));
-  if (!selectedId || !task) return null;
+  const detailOpen = useStore((s) => s.detailOpen);
+  const mobile = useIsMobile();
+  if (!selectedId || !task || (mobile && !detailOpen)) return null;
   return (
     <aside
       className={cn(
         "bg-background flex h-full w-[360px] shrink-0 flex-col border-l",
-        // Overlay instead of squeezing the list on narrow windows.
-        "max-[980px]:absolute max-[980px]:inset-y-0 max-[980px]:right-0 max-[980px]:z-30 max-[980px]:shadow-2xl",
+        // Overlay instead of squeezing the list on narrow windows …
+        "md:max-[980px]:absolute md:max-[980px]:inset-y-0 md:max-[980px]:right-0 md:max-[980px]:z-30 md:max-[980px]:shadow-2xl",
+        // … and the whole screen on phones.
+        "animate-in slide-in-from-right-8 fade-in-0 max-md:fixed max-md:inset-0 max-md:z-30 max-md:w-full max-md:border-l-0 duration-150 md:animate-none",
       )}
       aria-label="Task details"
     >
-      <DetailBody key={task.id} task={task} />
+      <DetailBody key={task.id} task={task} mobile={mobile} />
     </aside>
   );
 }
@@ -72,7 +78,7 @@ function Row({ icon, children }: { icon: React.ReactNode; children: React.ReactN
   );
 }
 
-function DetailBody({ task }: { task: Task }) {
+function DetailBody({ task, mobile }: { task: Task; mobile: boolean }) {
   const lists = useStore((s) => s.lists);
   const tasks = useStore((s) => s.tasks);
   const focusTitle = useStore((s) => s.focusTitle);
@@ -162,6 +168,17 @@ function DetailBody({ task }: { task: Task }) {
   return (
     <>
       <div className="flex h-12 shrink-0 items-center gap-1 border-b px-3">
+        {mobile && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-muted-foreground -ml-1"
+            onClick={() => useStore.getState().select(null)}
+            aria-label="Back"
+          >
+            <ArrowLeftIcon />
+          </Button>
+        )}
         <Select
           value={task.listId}
           disabled={readOnly}
@@ -212,15 +229,17 @@ function DetailBody({ task }: { task: Task }) {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground"
-          onClick={() => useStore.getState().select(null)}
-          aria-label="Close details"
-        >
-          <XIcon />
-        </Button>
+        {!mobile && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground"
+            onClick={() => useStore.getState().select(null)}
+            aria-label="Close details"
+          >
+            <XIcon />
+          </Button>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">

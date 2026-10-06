@@ -1,5 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 
+import { androidBridge } from "@/lib/platform";
+
 export type Theme = "system" | "light" | "dark";
 
 const KEY = "tasksng-theme";
@@ -23,7 +25,9 @@ function resolve(theme: Theme): "light" | "dark" {
 }
 
 function apply() {
-  document.documentElement.classList.toggle("dark", resolve(current) === "dark");
+  const dark = resolve(current) === "dark";
+  document.documentElement.classList.toggle("dark", dark);
+  androidBridge()?.setDarkTheme(dark);
   listeners.forEach((l) => l());
 }
 

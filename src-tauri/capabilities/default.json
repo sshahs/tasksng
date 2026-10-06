@@ -1,7 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the main and quick add windows",
+  "description": "Permissions for the main and quick add windows on the desktop",
+  "platforms": [
+    "windows",
+    "linux",
+    "macOS"
+  ],
   "windows": [
     "main",
     "quick-add"
