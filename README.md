@@ -484,7 +484,10 @@ password, add `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as well. Keep a backup of the
 installed copies only accept updates signed with it.
 
 For each release, first set the new version in `src-tauri/tauri.conf.json`, `package.json`
-(`npm version X.Y.Z --no-git-tag-version`) and the workspace `Cargo.toml`, and commit it. The
+(`npm version X.Y.Z --no-git-tag-version`) and the workspace `Cargo.toml`, and commit it. Write
+the release notes in `docs/release-notes/X.Y.Z.md` in the same commit; the release uses them, and
+GitHub adds the list of changes below. To change the notes of a published release, edit the file
+and run the *Release notes* workflow with the version. The
 Nix package reads its version from the repository, while CI stamps it into the Windows builds.
 
 Then run the *Build* workflow from the *Actions* tab (*Run workflow*, with a version such as

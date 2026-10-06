@@ -321,6 +321,15 @@ jobs:
           path: out/*
           if-no-files-found: error
 
+      # Notes come from docs/release-notes/X.Y.Z.md when it exists; GitHub
+      # appends the list of changes either way.
+      - name: Release notes
+        if: env.RELEASE_TAG != ''
+        shell: bash
+        run: |
+          notes="docs/release-notes/${RELEASE_TAG#v}.md"
+          if [[ -f "$notes" ]]; then cp "$notes" release-notes.md; else : > release-notes.md; fi
+
       - name: Publish release
         if: env.RELEASE_TAG != ''
         uses: softprops/action-gh-release@v2
@@ -328,5 +337,6 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           name: TasksNG ${{ env.RELEASE_TAG }}
+          body_path: release-notes.md
           files: out/*
           generate_release_notes: true
