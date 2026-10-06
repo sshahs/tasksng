@@ -81,6 +81,17 @@ describe("buildSections", () => {
     expect(s[1].rows.map((r) => r.task.summary)).toEqual(["done"]);
   });
 
+  it("keeps just-finished tasks in place while completed tasks are hidden", () => {
+    const done = task({ summary: "just done", listId: "/k/", completed: true, status: "completed" });
+    const tasks = [task({ summary: "open", listId: "/k/" }), done];
+    const keep = new Set([done.id]);
+    const rows = buildSections("list:/k/", tasks, { ...opts, keep }).flatMap((s) => s.rows);
+    expect(rows.map((r) => r.task.summary).sort()).toEqual(["just done", "open"]);
+    // With completed tasks shown it goes to their section as usual.
+    const s = buildSections("list:/k/", tasks, { ...opts, keep, showCompleted: true });
+    expect(s.find((x) => x.id === "done")?.rows.map((r) => r.task.summary)).toEqual(["just done"]);
+  });
+
   it("filters by search terms including tags", () => {
     const tasks = [task({ summary: "Buy milk", categories: ["shop"] }), task({ summary: "Call mom" })];
     const s = buildSections("all", tasks, { ...opts, search: "#shop" });

@@ -74,6 +74,11 @@ export function createMockBackend() {
     mk(G, { summary: "Basil" }),
     mk(G, { summary: "Sourdough bread", completed: true, status: "completed", completedAt: new Date().toISOString() }),
   ];
+  // `?many=500` adds that many tasks to try the app with a big list.
+  const many = Number(new URLSearchParams(location.search).get("many")) || 0;
+  for (let i = 0; i < many; i++) {
+    tasks.push(mk([P, W, G][i % 3], { summary: `Generated task ${i + 1}`, priority: [0, 1, 5, 9][i % 4], due: i % 5 ? null : day(i % 9) }));
+  }
   const trash = new Map<number, Task[]>();
   let token = 0;
   let lastSync: string | null = new Date().toISOString();

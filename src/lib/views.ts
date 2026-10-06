@@ -50,6 +50,8 @@ export interface ViewOptions {
   lists?: TaskList[];
   savedSearches?: SavedSearch[];
   now?: Date;
+  /** Just finished: stay where they were for a moment while completed tasks are hidden. */
+  keep?: ReadonlySet<string>;
 }
 
 const sameDay = (a: Date, b: Date) => startOfDay(a).getTime() === startOfDay(b).getTime();
@@ -152,7 +154,8 @@ export function buildSections(view: ViewId, all: Task[], opts: ViewOptions): Sec
   );
   // Finished tasks are hidden unless asked for (or the saved search is about them).
   const showDone = opts.showCompleted || !!q?.wantsDone || !!search?.wantsDone;
-  const open = inThisView.filter((t) => !t.completed);
+  const keep = showDone ? null : opts.keep;
+  const open = inThisView.filter((t) => !t.completed || !!keep?.has(t.id));
   const done = showDone ? inThisView.filter((t) => t.completed) : [];
   const sections: Section[] = [];
 

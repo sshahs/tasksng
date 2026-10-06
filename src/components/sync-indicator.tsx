@@ -4,7 +4,6 @@ import { AlertTriangleIcon, CheckIcon, CloudOffIcon, KeyRoundIcon, RefreshCwIcon
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { relativeTime } from "@/lib/dates";
 import { useStore } from "@/lib/store";
-import { cn } from "@/lib/utils";
 
 export function SyncIndicator() {
   const status = useStore((s) => s.status);
@@ -43,8 +42,13 @@ export function SyncIndicator() {
       }}
       className="text-muted-foreground hover:text-foreground hover:bg-sidebar-accent flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs [&_svg]:size-3.5 [&_svg]:shrink-0"
     >
-      {icon}
-      <span className={cn("truncate")}>{text}</span>
+      {/* The icon and text swap in when the state changes. */}
+      <span key={status.state} className="animate-in fade-in-0 zoom-in-75 flex duration-300">
+        {icon}
+      </span>
+      <span key={text} className="animate-in fade-in-0 truncate duration-300">
+        {text}
+      </span>
     </button>
   );
 

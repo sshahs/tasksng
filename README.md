@@ -463,6 +463,10 @@ password is `demo`. The screenshots in this README come from that demo.
 Below 768 pixels wide the UI switches to the phone layout of the Android app, so `npm run dev`
 in a narrow window (or the browser's device toolbar) shows that as well.
 
+Add `?many=500` to the URL to try the UI with that many extra tasks. Animations are best judged
+in a production build, which `VITE_BACKEND=demo npm run build && npx vite preview` gives you with
+the demo backend. They follow the system's "reduce motion" setting.
+
 To work on the web version, run the server and point the dev UI at it:
 
 ```sh

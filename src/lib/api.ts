@@ -21,9 +21,12 @@ type Listen = <T>(event: string, handler: (payload: T) => void) => Promise<Unlis
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 /**
  * The self-hosted web version (tasksng-server). `npm run dev` uses the demo
- * backend unless VITE_BACKEND=server.
+ * backend unless VITE_BACKEND=server; VITE_BACKEND=demo builds with it.
  */
-export const isWeb = !isTauri && (!import.meta.env.DEV || import.meta.env.VITE_BACKEND === "server");
+export const isWeb =
+  !isTauri &&
+  import.meta.env.VITE_BACKEND !== "demo" &&
+  (!import.meta.env.DEV || import.meta.env.VITE_BACKEND === "server");
 
 let backend: Promise<{ invoke: Invoke; listen: Listen }> | null = null;
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { KeyRoundIcon } from "lucide-react";
+import { AnimatePresence, domMax, LazyMotion, m, MotionConfig } from "motion/react";
 
 import { CommandPalette } from "@/components/command-palette";
 import { ListDialog } from "@/components/list-dialog";
@@ -17,6 +18,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useTheme } from "@/hooks/use-theme";
 import { takeLaunchAction, useAndroid } from "@/lib/android";
 import { api, windowReady } from "@/lib/api";
+import { spring } from "@/lib/motion";
 import { getPref } from "@/lib/prefs";
 import { SMART_VIEWS, useStore, type ViewId } from "@/lib/store";
 import { useUpdates } from "@/lib/updater";
@@ -139,37 +141,61 @@ export default function App() {
   ]);
 
   return (
-    <TooltipProvider>
-      {fatal ? (
-        <div className="text-destructive flex h-full items-center justify-center p-8 text-sm">{fatal}</div>
-      ) : !ready ? null : !account ? (
-        <SetupScreen />
-      ) : (
-        <div className="flex h-full">
-          {mobile ? <SidebarDrawer /> : sidebarOpen && <Sidebar />}
-          <main className="relative flex min-w-0 flex-1 flex-col">
-            {authRequired && (
-              <div className="bg-destructive/10 text-destructive flex items-center gap-3 border-b px-4 py-2 text-sm">
-                <KeyRoundIcon className="size-4 shrink-0" />
-                <span className="flex-1">Your Baikal server rejected the saved password. Changes are kept until you sign in again.</span>
-                <Button size="sm" variant="outline" onClick={() => s().set({ settingsOpen: true })}>
-                  Sign in
-                </Button>
-              </div>
-            )}
-            <div className="relative flex min-h-0 flex-1">
-              <TaskPane />
-              <TaskDetail />
+    // Less motion when the system asks for it: no movement, fades only.
+    <LazyMotion features={domMax} strict>
+      <MotionConfig reducedMotion="user" transition={spring}>
+        <TooltipProvider>
+          {fatal ? (
+            <div className="text-destructive flex h-full items-center justify-center p-8 text-sm">{fatal}</div>
+          ) : !ready ? null : !account ? (
+            <SetupScreen />
+          ) : (
+            <div className="relative flex h-full overflow-hidden">
+              {mobile ? (
+                <SidebarDrawer />
+              ) : (
+                // The sidebar slides in and out (Ctrl+B) and the rest of the
+                // window glides along with it: transforms only, so the task
+                // list is laid out once rather than on every frame.
+                <AnimatePresence initial={false} mode="popLayout">
+                  {sidebarOpen && (
+                    <m.div
+                      key="sidebar"
+                      className="z-10 h-full shrink-0"
+                      initial={{ x: -240 }}
+                      animate={{ x: 0 }}
+                      exit={{ x: -240 }}
+                    >
+                      <Sidebar />
+                    </m.div>
+                  )}
+                </AnimatePresence>
+              )}
+              <m.main layout="position" className="relative flex min-w-0 flex-1 flex-col">
+                {authRequired && (
+                  <div className="bg-destructive/10 text-destructive flex items-center gap-3 border-b px-4 py-2 text-sm">
+                    <KeyRoundIcon className="size-4 shrink-0" />
+                    <span className="flex-1">Your Baikal server rejected the saved password. Changes are kept until you sign in again.</span>
+                    <Button size="sm" variant="outline" onClick={() => s().set({ settingsOpen: true })}>
+                      Sign in
+                    </Button>
+                  </div>
+                )}
+                <div className="relative flex min-h-0 flex-1">
+                  <TaskPane />
+                  <TaskDetail />
+                </div>
+              </m.main>
             </div>
-          </main>
-        </div>
-      )}
-      <CommandPalette />
-      <ListDialog />
-      <SearchDialog />
-      <TagDialog />
-      <SettingsDialog />
-      <Toaster position="bottom-center" closeButton />
-    </TooltipProvider>
+          )}
+          <CommandPalette />
+          <ListDialog />
+          <SearchDialog />
+          <TagDialog />
+          <SettingsDialog />
+          <Toaster position="bottom-center" closeButton />
+        </TooltipProvider>
+      </MotionConfig>
+    </LazyMotion>
   );
 }

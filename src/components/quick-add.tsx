@@ -95,11 +95,16 @@ export function QuickAdd() {
     <div className="px-4 pb-2">
       <div
         className={cn(
-          "bg-muted/50 flex items-center gap-2 rounded-lg border border-transparent px-3 transition-colors",
+          "bg-muted/50 flex items-center gap-2 rounded-lg border border-transparent px-3 transition-[background-color,border-color,box-shadow] duration-200",
           focused && "bg-background border-ring ring-ring/30 ring-[3px]",
         )}
       >
-        <PlusIcon className={cn("size-4 shrink-0", focused ? "text-primary" : "text-muted-foreground")} />
+        <PlusIcon
+          className={cn(
+            "size-4 shrink-0 transition-[color,rotate] duration-300",
+            focused ? "text-primary rotate-90" : "text-muted-foreground",
+          )}
+        />
         <input
           ref={inputRef}
           value={text}
@@ -150,13 +155,13 @@ export function QuickAdd() {
           </DropdownMenu>
         )}
         {focused && !text && (
-          <span className="text-muted-foreground hidden shrink-0 items-center gap-1 text-xs lg:flex">
+          <span className="text-muted-foreground animate-in fade-in-0 slide-in-from-right-1 hidden shrink-0 items-center gap-1 text-xs duration-300 lg:flex">
             <Kbd>Enter</Kbd> to add
           </span>
         )}
       </div>
       {hasChips && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 px-1">
+        <div className="animate-in fade-in-0 slide-in-from-top-1 mt-1.5 flex flex-wrap items-center gap-1.5 px-1 duration-200 [&>*]:animate-in [&>*]:fade-in-0 [&>*]:zoom-in-90 [&>*]:duration-200">
           {parsed.list && (
             <Badge variant={mentioned ? "secondary" : "destructive"} className="font-normal">
               <AtSignIcon /> {mentioned ? mentioned.name : `No list “${parsed.list}”`}

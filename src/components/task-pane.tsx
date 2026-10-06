@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { addDays, format, nextMonday } from "date-fns";
+import { AnimatePresence, m } from "motion/react";
 import { toast } from "sonner";
 import {
   ArrowRightLeftIcon,
@@ -63,6 +64,8 @@ import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDayKey } from "@/hooks/use-day-key";
 import { useHotkeys } from "@/hooks/use-hotkeys";
+import { useBigChange, useJustCompleted } from "@/hooks/use-list-motion";
+import { usePresence } from "@/hooks/use-presence";
 import { isTouch, useIsMobile } from "@/hooks/use-mobile";
 import { dateOnly } from "@/lib/dates";
 import { planDrop, planKeyboardMove, useDrag, type DropPlan } from "@/lib/dnd";
@@ -71,11 +74,14 @@ import { SORT_MODES } from "@/lib/sort";
 import { listIdOf, searchIdOf, SMART_VIEWS, tagOf, useStore, type ViewId } from "@/lib/store";
 import type { Task, TaskPatch } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { buildSections, type Row } from "@/lib/views";
+import { buildSections, type Row, type Section } from "@/lib/views";
+import { FlipList, listItemProps } from "./animated-list";
 import { PRIORITIES, PriorityFlag } from "./priority";
 import { QuickAdd } from "./quick-add";
 import { STATUSES } from "./status";
 import { TaskRow } from "./task-row";
+
+type Item = { key: string; section: Section; row?: Row };
 
 /** Applies a drag-and-drop or keyboard move, switching the list to manual order if needed. */
 function applyPlan(view: ViewId, plan: DropPlan) {
@@ -116,13 +122,26 @@ export function TaskPane() {
   const list = listId ? (lists.find((l) => l.id === listId) ?? null) : null;
   const listById = useMemo(() => new Map(lists.map((l) => [l.id, l])), [lists]);
   const all = useMemo(() => Object.values(tasks), [tasks]);
+  const keep = useJustCompleted(tasks);
   const sections = useMemo(
-    () => buildSections(view, all, { search, showCompleted, collapsed, sort, lists, savedSearches }),
+    () => buildSections(view, all, { search, showCompleted, collapsed, sort, lists, savedSearches, keep }),
     // dayKey re-evaluates "today" after midnight.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [view, all, search, showCompleted, collapsed, sort, lists, savedSearches, dayKey],
+    [view, all, search, showCompleted, collapsed, sort, lists, savedSearches, keep, dayKey],
   );
   const rows = useMemo(() => sections.flatMap((s) => s.rows), [sections]);
+  const items = useMemo<Item[]>(
+    () =>
+      sections.flatMap((section) => [
+        ...(section.title ? [{ key: `section:${section.id}`, section }] : []),
+        ...section.rows.map((row) => ({ key: row.task.id, section, row })),
+      ]),
+    [sections],
+  );
+  const instant = useBigChange(items.map((i) => i.key));
+  const shown = usePresence(items, instant);
+  // A row starting to leave changes the order too: the rows below glide up.
+  const order = shown.map((p) => (p.leaving ? `${p.key}~` : p.key)).join("\n");
   const openRows = useMemo<Row[]>(() => (listId ? (sections.find((s) => s.id === "open")?.rows ?? []) : []), [sections, listId]);
   const openCount = rows.filter((r) => !r.task.completed).length;
   const selected = selectedId ? tasks[selectedId] : undefined;
@@ -254,7 +273,7 @@ export function TaskPane() {
       {searchFocused && !search && (
         <div
           className={cn(
-            "bg-popover text-popover-foreground absolute right-0 z-30 rounded-md border p-3 text-xs shadow-md",
+            "bg-popover text-popover-foreground animate-in fade-in-0 zoom-in-95 slide-in-from-top-1 absolute right-0 z-30 origin-top-right rounded-md border p-3 text-xs shadow-md",
             mobile ? "top-11 w-full" : "top-10 w-72",
           )}
         >
@@ -307,7 +326,10 @@ export function TaskPane() {
           <h1 className="flex items-center gap-2 truncate text-2xl font-semibold tracking-tight max-md:text-xl">
             {list && <span className="size-3 shrink-0 rounded-full" style={{ background: list.color ?? "var(--muted-foreground)" }} />}
             {saved && <SearchIcon className="text-muted-foreground size-5 shrink-0" />}
-            <span className="truncate">{title}</span>
+            {/* A new view's name rises into place. */}
+            <span key={view} className="animate-in fade-in-0 slide-in-from-bottom-1 truncate duration-300">
+              {title}
+            </span>
           </h1>
           <p className="text-muted-foreground mt-0.5 truncate text-sm">
             {subtitle ? `${subtitle} · ` : ""}
@@ -432,17 +454,32 @@ export function TaskPane() {
         </div>
       </header>
 
-      {showSearchRow && <div className="px-4 pb-2">{searchBox}</div>}
+      <AnimatePresence initial={false}>
+        {showSearchRow && (
+          <m.div
+            key="search"
+            className="px-4"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1, transitionEnd: { overflow: "visible" } }}
+            exit={{ height: 0, opacity: 0, overflow: "hidden" }}
+            style={{ overflow: "hidden" }}
+          >
+            <div className="pb-2">{searchBox}</div>
+          </m.div>
+        )}
+      </AnimatePresence>
 
       {!list?.readOnly && <QuickAdd />}
 
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
+            // A new view fades in as a whole; its rows don't animate one by one.
+            key={view}
             ref={listRef}
             role="listbox"
             aria-label={title}
-            className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 max-md:px-2"
+            className="animate-in fade-in-0 slide-in-from-bottom-1.5 relative min-h-0 flex-1 overflow-y-auto px-4 pb-8 duration-300 max-md:px-2"
             onDragOver={(e) => {
               // Dropping below the last task puts it at the end of the list.
               const { id, over } = useDrag.getState();
@@ -457,36 +494,40 @@ export function TaskPane() {
             }}
             onDrop={onDrop}
           >
-            {sections.map((section) => (
-              <section key={section.id} className="mb-2">
-                {section.title && (
-                  <h2
-                    className={cn(
-                      "bg-background/95 sticky top-0 z-10 px-2 pt-3 pb-1.5 text-xs font-semibold tracking-wide uppercase backdrop-blur",
-                      section.tone === "danger" ? "text-destructive" : "text-muted-foreground",
-                    )}
-                  >
-                    {section.title}
-                    <span className="text-muted-foreground/70 ml-2 font-normal">{section.rows.length}</span>
-                  </h2>
-                )}
-                {section.rows.map((r) => (
-                  <TaskRow
-                    key={r.task.id}
-                    task={r.task}
-                    depth={r.depth}
-                    childCount={r.childCount}
-                    childDone={r.childDone}
-                    hasVisibleChildren={r.hasVisibleChildren}
-                    collapsed={!!collapsed[r.task.uid]}
-                    selected={r.task.id === selectedId}
-                    list={listId ? null : (listById.get(r.task.listId) ?? null)}
-                    readOnly={readOnly(r.task)}
-                    droppable={!!listId && section.id === "open" && !readOnly(r.task)}
-                  />
-                ))}
-              </section>
-            ))}
+            <FlipList container={listRef} order={order} disabled={instant}>
+              {shown.map(({ key, item: { section, row: r }, entering, leaving }) => (
+                <div
+                  key={key}
+                  {...listItemProps(key, entering, leaving, r ? undefined : "bg-background/95 sticky top-0 z-10 backdrop-blur")}
+                >
+                  {r ? (
+                    <TaskRow
+                      task={r.task}
+                      depth={r.depth}
+                      childCount={r.childCount}
+                      childDone={r.childDone}
+                      hasVisibleChildren={r.hasVisibleChildren}
+                      collapsed={!!collapsed[r.task.uid]}
+                      selected={!leaving && r.task.id === selectedId}
+                      list={listId ? null : (listById.get(r.task.listId) ?? null)}
+                      readOnly={readOnly(r.task)}
+                      droppable={!leaving && !!listId && section.id === "open" && !readOnly(r.task)}
+                      justDone={keep.has(r.task.id)}
+                    />
+                  ) : (
+                    <h2
+                      className={cn(
+                        "mt-2 px-2 pt-3 pb-1.5 text-xs font-semibold tracking-wide uppercase",
+                        section.tone === "danger" ? "text-destructive" : "text-muted-foreground",
+                      )}
+                    >
+                      {section.title}
+                      <span className="text-muted-foreground/70 ml-2 font-normal tabular-nums">{section.rows.length}</span>
+                    </h2>
+                  )}
+                </div>
+              ))}
+            </FlipList>
             {rows.length === 0 && <EmptyState view={view} searching={!!search} />}
           </div>
         </ContextMenuTrigger>
@@ -676,8 +717,8 @@ function EmptyState({ view, searching }: { view: ViewId; searching: boolean }) {
               ? { title: "Nothing matches this search", body: "Tasks show up here as soon as they match." }
               : { title: "No tasks yet", body: isTouch() ? "Add one above." : "Add one above — press N anywhere to start typing." };
   return (
-    <div className="text-muted-foreground flex flex-col items-center justify-center gap-2 py-24 text-center">
-      <div className="bg-muted mb-2 flex size-14 items-center justify-center rounded-full">
+    <div className="text-muted-foreground animate-rise flex flex-col items-center justify-center gap-2 py-24 text-center">
+      <div className="bg-muted animate-in zoom-in-50 fade-in-0 mb-2 flex size-14 items-center justify-center rounded-full delay-75 duration-500 ease-(--ease-pop) fill-mode-both">
         {searching ? <SearchIcon className="size-6" /> : <CheckCircle2Icon className="size-6" />}
       </div>
       <p className="text-foreground font-medium">{text.title}</p>

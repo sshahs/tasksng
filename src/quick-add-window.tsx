@@ -85,7 +85,12 @@ export function QuickAddWindow() {
   return (
     <div className="bg-background flex h-full flex-col overflow-hidden border" onKeyDown={(e) => e.key === "Escape" && hide()}>
       <div className="flex items-center gap-3 px-4 pt-3">
-        {added && !text ? <CheckIcon className="text-primary size-5 shrink-0" /> : <PlusIcon className="text-primary size-5 shrink-0" />}
+        {/* A tick pops in when the task was added. */}
+        {added && !text ? (
+          <CheckIcon key="added" className="text-primary animate-in zoom-in-50 fade-in-0 size-5 shrink-0 duration-300 ease-(--ease-pop)" />
+        ) : (
+          <PlusIcon key="add" className="text-primary animate-in fade-in-0 size-5 shrink-0 duration-200" />
+        )}
         <input
           ref={inputRef}
           autoFocus

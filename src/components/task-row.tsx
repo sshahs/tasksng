@@ -19,7 +19,7 @@ import { startsLater } from "@/lib/search";
 import { useStore } from "@/lib/store";
 import type { Task, TaskList } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { PriorityFlag, priorityBorder, priorityFill, priorityLevel } from "./priority";
+import { PriorityFlag, priorityBorder, priorityFill, priorityLevel, priorityText } from "./priority";
 
 /** Clicking row controls must neither select the row nor steal keyboard focus. */
 function keepFocus(e: React.MouseEvent) {
@@ -45,6 +45,8 @@ export interface TaskRowProps {
   readOnly: boolean;
   /** Rows of a list's open section can be reordered and nested by dropping on them. */
   droppable: boolean;
+  /** Ticked off a moment ago. */
+  justDone: boolean;
 }
 
 /** Where on a row the pointer is: top quarter = before, bottom = after, else inside. */
@@ -65,6 +67,7 @@ export const TaskRow = memo(function TaskRow({
   list,
   readOnly,
   droppable,
+  justDone,
 }: TaskRowProps) {
   const due = parseDue(task.due);
   const start = parseDue(task.start);
@@ -89,6 +92,8 @@ export const TaskRow = memo(function TaskRow({
     task.pending;
 
   const select = () => useStore.getState().select(task.id);
+  // Just ticked off: the circle pops, a ring goes out, the line draws through.
+  const popping = justDone && task.completed;
 
   return (
     <div
@@ -125,7 +130,7 @@ export const TaskRow = memo(function TaskRow({
         if (over?.kind === "row" && over.id === task.id) useDrag.setState({ over: null });
       }}
       className={cn(
-        "group relative flex cursor-default items-start gap-2 rounded-md px-2 py-[7px] text-sm transition-colors max-md:py-2.5",
+        "group relative flex cursor-default items-start gap-2 rounded-md px-2 py-[7px] text-sm transition-[background-color,opacity,box-shadow] max-md:py-2.5",
         "hover:bg-accent/60",
         selected && "bg-accent hover:bg-accent",
         dragging && "opacity-40",
@@ -170,7 +175,8 @@ export const TaskRow = memo(function TaskRow({
           onCheckedChange={() => void useStore.getState().toggleComplete(task.id)}
           aria-label={task.completed ? "Mark as not done" : "Mark as done"}
           className={cn(
-            "relative size-[18px] rounded-full border-[1.5px] shadow-none transition-colors after:absolute after:-inset-2.5",
+            "relative size-[18px] rounded-full border-[1.5px] shadow-none after:absolute after:-inset-2.5",
+            popping && "animate-check-pop",
             priorityBorder[level],
             !task.completed && "hover:bg-accent",
             cancelled && "data-[state=checked]:bg-muted-foreground data-[state=checked]:border-muted-foreground [&_svg]:hidden",
@@ -187,16 +193,27 @@ export const TaskRow = memo(function TaskRow({
         {cancelled && (
           <XIcon aria-hidden className="text-background pointer-events-none absolute inset-[3px] size-3 stroke-[3]" />
         )}
+        {popping && (
+          <span
+            aria-hidden
+            className={cn(
+              "animate-check-ring pointer-events-none absolute inset-0 rounded-full border-2 border-current",
+              level === "none" ? "text-primary" : priorityText[level],
+            )}
+          />
+        )}
       </div>
       <div className="min-w-0 flex-1">
         <div
           className={cn(
-            "truncate leading-5",
-            task.completed && "text-muted-foreground line-through decoration-muted-foreground/60",
+            "truncate leading-5 transition-colors duration-300",
+            task.completed && "text-muted-foreground",
             !task.summary && "text-muted-foreground italic",
           )}
         >
-          {task.summary || "Untitled task"}
+          <span className={cn("strike", popping && "strike-draw")} data-done={task.completed}>
+            {task.summary || "Untitled task"}
+          </span>
         </div>
         {hasMeta && (
           <div className="text-muted-foreground mt-0.5 flex min-w-0 items-center gap-x-3 gap-y-0.5 text-xs leading-4">

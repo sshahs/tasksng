@@ -26,6 +26,7 @@ export function ConnectForm({
   const [advanced, setAdvanced] = useState(initial?.acceptInvalidCerts ?? false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   // The web version may be tied to one CalDAV server.
   const [fixedServer, setFixedServer] = useState<string | null>(null);
 
@@ -44,6 +45,7 @@ export function ConnectForm({
   const submit = async () => {
     setBusy(true);
     setError(null);
+    setAttempt((n) => n + 1);
     try {
       await useStore.getState().connect({ serverUrl, username, password, acceptInvalidCerts: insecure });
       onConnected?.();
@@ -137,7 +139,11 @@ export function ConnectForm({
       )}
 
       {error && (
-        <div className="border-destructive/30 bg-destructive/5 text-destructive flex items-start gap-2 rounded-md border p-3 text-sm">
+        // A small shake each time signing in fails, so a repeated error is noticed too.
+        <div
+          key={attempt}
+          className="border-destructive/30 bg-destructive/5 text-destructive animate-shake flex items-start gap-2 rounded-md border p-3 text-sm"
+        >
           <AlertCircleIcon className="mt-0.5 size-4 shrink-0" />
           <span className="break-words">{error}</span>
         </div>

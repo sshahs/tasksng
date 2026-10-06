@@ -104,6 +104,75 @@
   --color-priority-high: var(--priority-high);
   --color-priority-medium: var(--priority-medium);
   --color-priority-low: var(--priority-low);
+
+  /* One feel for everything that moves: quick ease-out on the way in,
+     quicker on the way out. Menus, dialogs and tooltips (tw-animate-css)
+     use these too. */
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --default-transition-duration: 180ms;
+  --default-transition-timing-function: var(--ease-out-quint);
+  --animate-in: enter var(--tw-animation-duration, var(--tw-duration, 200ms)) var(--tw-ease, var(--ease-out-quint))
+    var(--tw-animation-delay, 0s) var(--tw-animation-iteration-count, 1) var(--tw-animation-direction, normal)
+    var(--tw-animation-fill-mode, none);
+  --animate-out: exit var(--tw-animation-duration, var(--tw-duration, 140ms)) var(--tw-ease, cubic-bezier(0.4, 0, 1, 1))
+    var(--tw-animation-delay, 0s) var(--tw-animation-iteration-count, 1) var(--tw-animation-direction, normal)
+    var(--tw-animation-fill-mode, none);
+  --animate-check-pop: check-pop 420ms var(--ease-pop);
+  --animate-check-ring: check-ring 520ms var(--ease-out-quint) forwards;
+  --animate-rise: rise 360ms var(--ease-out-quint) both;
+  --animate-shake: shake 420ms var(--ease-out-quint);
+
+  @keyframes shake {
+    0% {
+      opacity: 0;
+      transform: translateX(0);
+    }
+    20% {
+      opacity: 1;
+      transform: translateX(-6px);
+    }
+    40% {
+      transform: translateX(5px);
+    }
+    60% {
+      transform: translateX(-3px);
+    }
+    80% {
+      transform: translateX(2px);
+    }
+    100% {
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes check-pop {
+    0% {
+      transform: scale(1);
+    }
+    30% {
+      transform: scale(0.8);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+  @keyframes check-ring {
+    from {
+      transform: scale(1);
+      opacity: 0.55;
+    }
+    to {
+      transform: scale(2.1);
+      opacity: 0;
+    }
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+  }
 }
 
 @layer base {
@@ -149,4 +218,73 @@
   ::-webkit-scrollbar-track {
     background: transparent;
   }
+}
+
+@layer components {
+  /* A leaving list row fades where it was while the rows around it glide
+     with transforms (see ListItem). */
+  .row-leave {
+    position: absolute;
+    z-index: 0;
+    animation: row-out 220ms cubic-bezier(0.4, 0, 1, 1) both;
+    pointer-events: none;
+  }
+
+  /* A row gliding to a new place (FlipList) covers the rows it passes. */
+  .flip-moving {
+    position: relative;
+    border-radius: var(--radius-md);
+    background-color: var(--background);
+  }
+
+  /* A line through finished tasks. Unlike text-decoration it can draw
+     itself from left to right (.strike-draw, when a task is ticked off),
+     and it works on wrapped and truncated text. */
+  .strike[data-done="true"] {
+    --strike: color-mix(in oklab, currentColor 60%, transparent);
+    background-image: linear-gradient(var(--strike), var(--strike));
+    background-repeat: no-repeat;
+    background-position: 0 55%;
+    background-size: 100% 1px;
+  }
+  .strike-draw {
+    animation: strike-draw 360ms var(--ease-out-quint) 40ms both;
+  }
+}
+
+@keyframes row-out {
+  to {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+@keyframes strike-draw {
+  from {
+    background-size: 0% 1px;
+  }
+}
+
+/* People who ask their system for less motion get (almost) none. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
+
+/* Switching between light and dark cross-fades the whole window. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 260ms;
+  animation-timing-function: var(--ease-out-quint);
 }

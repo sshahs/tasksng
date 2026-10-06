@@ -1,5 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 
+import { prefersReducedMotion } from "@/lib/motion";
 import { androidBridge } from "@/lib/platform";
 
 export type Theme = "system" | "light" | "dark";
@@ -42,7 +43,11 @@ export function setTheme(theme: Theme) {
   } catch {
     // ignore
   }
-  apply();
+  // Cross-fade the whole window into the new colours where the engine can.
+  const dark = document.documentElement.classList.contains("dark");
+  const changes = (resolve(theme) === "dark") !== dark;
+  if (changes && document.startViewTransition && !prefersReducedMotion()) document.startViewTransition(apply);
+  else apply();
 }
 
 function subscribe(cb: () => void) {

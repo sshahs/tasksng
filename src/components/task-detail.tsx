@@ -17,6 +17,7 @@ import {
   UnlinkIcon,
   XIcon,
 } from "lucide-react";
+import { AnimatePresence, m } from "motion/react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -33,6 +34,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { formatTimestamp } from "@/lib/dates";
 import { toggleChecklistLine } from "@/lib/markdown";
+import { fade } from "@/lib/motion";
 import { describeRule } from "@/lib/rrule";
 import { useStore } from "@/lib/store";
 import type { Task, TaskPatch } from "@/lib/types";
@@ -47,25 +49,47 @@ import { RepeatEditor } from "./repeat-editor";
 import { STATUSES } from "./status";
 import { TagInput } from "./tag-input";
 
+/**
+ * The details slide in from the right: beside the list, over it on narrow
+ * windows, and over the whole screen on phones like a new page. Transforms
+ * only; the list makes room at once instead of on every frame.
+ */
 export function TaskDetail() {
   const selectedId = useStore((s) => s.selectedId);
   const task = useStore((s) => (s.selectedId ? s.tasks[s.selectedId] : undefined));
   const detailOpen = useStore((s) => s.detailOpen);
   const mobile = useIsMobile();
-  if (!selectedId || !task || (mobile && !detailOpen)) return null;
+  const open = !!selectedId && !!task && (!mobile || detailOpen);
   return (
-    <aside
-      className={cn(
-        "bg-background flex h-full w-[360px] shrink-0 flex-col border-l",
-        // Overlay instead of squeezing the list on narrow windows …
-        "md:max-[980px]:absolute md:max-[980px]:inset-y-0 md:max-[980px]:right-0 md:max-[980px]:z-30 md:max-[980px]:shadow-2xl",
-        // … and the whole screen on phones.
-        "animate-in slide-in-from-right-8 fade-in-0 max-md:fixed max-md:inset-0 max-md:z-30 max-md:w-full max-md:border-l-0 duration-150 md:animate-none",
+    <AnimatePresence initial={false} mode="popLayout">
+      {open && (
+        <m.aside
+          key="detail"
+          initial={{ x: "100%" }}
+          animate={{ x: 0 }}
+          exit={{ x: "100%" }}
+          className={cn(
+            "bg-background z-20 flex h-full shrink-0 flex-col overflow-hidden border-l",
+            // Overlay instead of squeezing the list on narrow windows …
+            "md:max-[980px]:absolute md:max-[980px]:inset-y-0 md:max-[980px]:right-0 md:max-[980px]:z-30 md:max-[980px]:shadow-2xl",
+            // … and the whole screen on phones.
+            "max-md:fixed max-md:inset-0 max-md:z-30 max-md:border-l-0",
+          )}
+          aria-label="Task details"
+        >
+          {/* Keeps its width while the panel opens, so nothing inside reflows. */}
+          <m.div
+            key={task.id}
+            className="flex h-full w-[360px] flex-col max-md:w-full"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={fade}
+          >
+            <DetailBody task={task} mobile={mobile} />
+          </m.div>
+        </m.aside>
       )}
-      aria-label="Task details"
-    >
-      <DetailBody key={task.id} task={task} mobile={mobile} />
-    </aside>
+    </AnimatePresence>
   );
 }
 
@@ -466,7 +490,7 @@ function DetailBody({ task, mobile }: { task: Task; mobile: boolean }) {
                 aria-label="Notes"
               />
               {notesMode === "edit" && (
-                <p className="text-muted-foreground/80 mt-1 text-[11px]">
+                <p className="text-muted-foreground/80 animate-in fade-in-0 slide-in-from-top-1 mt-1 text-[11px] duration-300">
                   **bold** · _italic_ · - list · - [ ] checklist · [link](https://…)
                 </p>
               )}
@@ -485,27 +509,38 @@ function DetailBody({ task, mobile }: { task: Task; mobile: boolean }) {
               </span>
             )}
           </div>
-          {subtasks.map((s) => (
-            <div key={s.id} className="hover:bg-accent/60 group flex items-center gap-2.5 rounded-md px-2 py-1.5">
-              <Checkbox
-                checked={s.completed}
-                disabled={readOnly}
-                onCheckedChange={() => void useStore.getState().toggleComplete(s.id)}
-                className={cn("size-4 rounded-full shadow-none", priorityBorder[priorityLevel(s.priority)])}
-                aria-label={`Done: ${s.summary}`}
-              />
-              <button
-                className={cn(
-                  "min-w-0 flex-1 truncate text-left text-sm",
-                  s.completed && "text-muted-foreground line-through",
-                )}
-                onClick={() => useStore.getState().select(s.id)}
+          <AnimatePresence initial={false}>
+            {subtasks.map((s) => (
+              <m.div
+                key={s.id}
+                layout="position"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="hover:bg-accent/60 group flex items-center gap-2.5 overflow-hidden rounded-md px-2 py-1.5 transition-colors"
               >
-                {s.summary || "Untitled task"}
-              </button>
-              <PriorityFlag priority={s.priority} />
-            </div>
-          ))}
+                <Checkbox
+                  checked={s.completed}
+                  disabled={readOnly}
+                  onCheckedChange={() => void useStore.getState().toggleComplete(s.id)}
+                  className={cn("size-4 rounded-full shadow-none", priorityBorder[priorityLevel(s.priority)])}
+                  aria-label={`Done: ${s.summary}`}
+                />
+                <button
+                  className={cn(
+                    "min-w-0 flex-1 truncate text-left text-sm transition-colors duration-300",
+                    s.completed && "text-muted-foreground",
+                  )}
+                  onClick={() => useStore.getState().select(s.id)}
+                >
+                  <span className="strike" data-done={s.completed}>
+                    {s.summary || "Untitled task"}
+                  </span>
+                </button>
+                <PriorityFlag priority={s.priority} />
+              </m.div>
+            ))}
+          </AnimatePresence>
           {!readOnly && (
             <div className="flex items-center gap-2.5 px-2 py-1">
               <PlusIcon className="text-muted-foreground size-4" />
