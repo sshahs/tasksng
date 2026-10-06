@@ -17,6 +17,8 @@ export interface AndroidBridge {
   setDarkTheme(dark: boolean): void;
   /** Sends the app to the background, like Back on the home screen. */
   moveToBack(): void;
+  /** Hands the home screen widget the tasks of the coming week (JSON). */
+  updateWidget?(json: string): void;
 }
 
 export function androidBridge(): AndroidBridge | undefined {

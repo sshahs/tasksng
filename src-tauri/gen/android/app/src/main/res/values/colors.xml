@@ -2,4 +2,12 @@
 <resources>
     <!-- The page background (src/index.css), shown while it loads. -->
     <color name="background">#FFFFFFFF</color>
+    <!-- Home screen widget (TodayWidget). -->
+    <color name="widget_background">#FFF8F9FB</color>
+    <color name="widget_text">#FF18181B</color>
+    <color name="widget_text_secondary">#FF6B6B73</color>
+    <color name="widget_overdue">#FFDC2626</color>
+    <color name="widget_accent">#FF2563EB</color>
+    <color name="widget_accent_background">#1F2563EB</color>
+    <color name="widget_divider">#14000000</color>
 </resources>

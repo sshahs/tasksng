@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="background">#FF0D0E10</color>
+    <color name="widget_background">#FF1C1D21</color>
+    <color name="widget_text">#FFF4F4F5</color>
+    <color name="widget_text_secondary">#FFA1A1AA</color>
+    <color name="widget_overdue">#FFF87171</color>
+    <color name="widget_accent">#FF7AA2FF</color>
+    <color name="widget_accent_background">#297AA2FF</color>
+    <color name="widget_divider">#1FFFFFFF</color>
 </resources>

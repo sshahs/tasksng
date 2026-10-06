@@ -72,6 +72,12 @@ Reminders are handed to Android's alarm service, so they appear on time with *Sn
 show notifications. A reminder added on another device is scheduled the next time the phone
 syncs, which happens whenever you open TasksNG.
 
+Long-press the home screen and add the *Today* widget to see today's tasks at a glance: tap one
+to open it, + to add a task. It keeps up when the day changes even if TasksNG hasn't been opened.
+
+On Android 17 TasksNG asks to use *Nearby devices* when it starts; it needs that to reach a Baikal
+server on your home network.
+
 Your password is kept in the app's private storage. TasksNG trusts the certificate authorities
 that come with Android, not ones you installed yourself, so for a self-signed certificate turn on
 *Accept invalid TLS certificates* under *Advanced* when signing in.
@@ -238,8 +244,9 @@ task-only calendars.
 
 ### Lists and views
 
-The sidebar has four smart lists. *Today* includes overdue tasks and tasks that start today,
-*Upcoming* groups tasks by day, and there are *Important* and *All tasks*. Below them are your
+The sidebar has five smart lists. *Today* includes overdue tasks and tasks that start today,
+*Plan* is the [day planner](#day-planner), *Upcoming* groups tasks by day, and there are
+*Important* and *All tasks*. Below them are your
 Baikal calendars that hold tasks, which you can create, rename, recolour and delete from
 TasksNG. Tags and saved searches appear underneath (see [Search filters](#search-filters)).
 
@@ -283,6 +290,21 @@ it to the next date, and cancelling it skips one.
 Notes support Markdown: bold, italics, lists, links you can click and `- [ ]` checklists you can
 tick. You can also move tasks between lists, duplicate them, and delete them with undo.
 
+### Day planner
+
+*Plan* shows a day as a timeline with the events from your Baikal calendars next to your tasks.
+Today's tasks wait in a tray on the left (on another day, the ones due then). Drag a task onto
+the timeline to plan when you'll do it, drag the block to move it, drag its bottom edge to change
+how long, or drag it back to the tray to unplan it. Times snap to quarter hours. On a phone, press
+and hold a task to pick it up. The header adds up what is planned and how much time is free until
+18:00. ← and → change the day, <kbd>T</kbd> goes back to today.
+
+You can also plan a task from its details (*Plan a time*) without dragging. Plans sync like
+everything else: they're stored in the task as `X-TASKSNG-PLANNED` and
+`X-TASKSNG-PLANNED-DURATION`, so a planned time doesn't change the task's due or start date and
+other apps leave it alone. Repeating events are expanded by Baikal; events are read only and
+kept for offline use.
+
 ### Reminders and the tray
 
 Reminders show up as system notifications with *Snooze* and *Done* buttons. They are standard
@@ -307,6 +329,12 @@ the network comes back. It supports Basic and Digest authentication (Digest is B
 default). Your password goes into Windows Credential Manager or, on Linux, into your desktop's
 keyring. TasksNG trusts the certificates your system trusts, and has an option to accept
 self-signed ones.
+
+When the same task was changed on this device and another one before they synced, TasksNG
+keeps both versions and asks. A banner above the list and a mark on the task lead to a side by
+side comparison of what differs, starting from the version changed last. Pick one side, or some
+fields from each. A task deleted on one device and changed on the other works the same way:
+keep it or delete it, restore yours or let it go.
 
 ### Keyboard shortcuts
 

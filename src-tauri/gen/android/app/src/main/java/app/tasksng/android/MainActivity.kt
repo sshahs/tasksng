@@ -22,11 +22,12 @@ class MainActivity : TauriActivity() {
    * asks for it once it has loaded (`TasksNGAndroid.takeLaunchAction()`).
    */
   @Volatile private var launchAction: String? = null
+  private var webView: WebView? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     if (savedInstanceState == null) {
-      launchAction = notificationAction(intent)
+      launchAction = notificationAction(intent) ?: widgetAction(intent)
     }
     super.onCreate(savedInstanceState)
 
@@ -58,7 +59,28 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onWebViewCreate(webView: WebView) {
+    this.webView = webView
     webView.addJavascriptInterface(Bridge(), "TasksNGAndroid")
+  }
+
+  /** The home screen widget opened the app while it was running. */
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    val action = widgetAction(intent) ?: return
+    launchAction = action
+    webView?.post { webView?.evaluateJavascript("window.dispatchEvent(new Event('tasksng-launch'))", null) }
+  }
+
+  /** A tap on the "Today" widget: a task, the add button or the header. */
+  private fun widgetAction(intent: Intent?): String? {
+    val action = JSONObject()
+    when (intent?.action) {
+      TodayWidget.ACTION_OPEN -> action.put("widget", "open").put("taskId", intent.getStringExtra(TodayWidget.EXTRA_TASK) ?: return null)
+      TodayWidget.ACTION_ADD -> action.put("widget", "add")
+      TodayWidget.ACTION_TODAY -> action.put("widget", "today")
+      else -> return null
+    }
+    return action.toString()
   }
 
   private fun systemIsDark(): Boolean =
@@ -108,6 +130,12 @@ class MainActivity : TauriActivity() {
     @JavascriptInterface
     fun moveToBack() {
       runOnUiThread { moveTaskToBack(true) }
+    }
+
+    /** The tasks of the coming week for the home screen widget (JSON). */
+    @JavascriptInterface
+    fun updateWidget(json: String) {
+      TodayWidget.save(applicationContext, json)
     }
   }
 }
