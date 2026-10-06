@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 17: reaching a server on the home network (Baikal on a PC or
+         NAS) needs this as well. Android shows it as "Nearby devices". -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <!-- Reminders on time: exact alarms are granted to reminder apps from
          Android 13 and by default on Android 12. -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />

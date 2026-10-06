@@ -1,8 +1,10 @@
 package app.tasksng.android
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.webkit.JavascriptInterface
@@ -41,6 +43,18 @@ class MainActivity : TauriActivity() {
       WindowInsetsCompat.CONSUMED
     }
     applyTheme(systemIsDark())
+    askForLocalNetwork()
+  }
+
+  /**
+   * From Android 17, connections to the home network (a Baikal server on a PC
+   * or NAS) time out unless the user allows "Nearby devices". Asked at each
+   * start until allowed; Android stops showing the prompt after two refusals.
+   */
+  private fun askForLocalNetwork() {
+    if (Build.VERSION.SDK_INT < 37) return
+    if (checkSelfPermission(LOCAL_NETWORK) == PackageManager.PERMISSION_GRANTED) return
+    requestPermissions(arrayOf(LOCAL_NETWORK), LOCAL_NETWORK_REQUEST)
   }
 
   override fun onWebViewCreate(webView: WebView) {
@@ -71,6 +85,11 @@ class MainActivity : TauriActivity() {
       runCatching { action.put("notification", JSONObject(json)) }
     }
     return action.toString()
+  }
+
+  private companion object {
+    const val LOCAL_NETWORK = "android.permission.ACCESS_LOCAL_NETWORK"
+    const val LOCAL_NETWORK_REQUEST = 37
   }
 
   inner class Bridge {

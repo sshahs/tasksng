@@ -12,9 +12,25 @@ pub mod settings;
 pub mod store;
 pub mod sync;
 
+/// Android 17 drops connections to the home network unless the app may use
+/// "Nearby devices", so they time out.
+#[cfg(target_os = "android")]
+fn network_hint(message: &str) -> &'static str {
+    if message.contains("timed out") {
+        ". If the server is on your home network, allow TasksNG to use nearby devices: Android Settings → Apps → TasksNG → Permissions → Nearby devices"
+    } else {
+        ""
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn network_hint(_message: &str) -> &'static str {
+    ""
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Can't reach the server ({0})")]
+    #[error("Can't reach the server ({0}){hint}", hint = network_hint(.0))]
     Network(String),
     #[error("The server's TLS certificate isn't trusted ({0}). Add your certificate authority to the system's trusted certificates, or enable “Accept invalid TLS certificates” under Advanced.")]
     Certificate(String),
