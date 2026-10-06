@@ -95,6 +95,17 @@ export const FIELDS: ConflictField[] = [
     patch: (t) => ({ reminders: t.reminders }),
   },
   {
+    key: "planned",
+    label: "Planned",
+    same: (a, b) => a.planned === b.planned && (a.plannedMinutes ?? 0) === (b.plannedMinutes ?? 0),
+    show: (t) => {
+      const at = parseDue(t.planned);
+      if (!at) return "Not planned";
+      return `${formatDue(at)} for ${t.plannedMinutes ?? 30} min`;
+    },
+    patch: (t) => ({ planned: t.planned, plannedMinutes: t.plannedMinutes }),
+  },
+  {
     key: "parentUid",
     label: "Subtask of",
     same: (a, b) => a.parentUid === b.parentUid,

@@ -4,9 +4,11 @@
 
 use std::sync::Mutex;
 
+use chrono::{DateTime, Utc};
 use reqwest::Url;
 
 use crate::dav::{DavClient, PutCondition};
+use crate::events::{self, CalEvent};
 use crate::store::{EntryState, Store};
 use crate::{Error, Result};
 
@@ -90,4 +92,27 @@ pub async fn sync(store: &Mutex<Store>, client: &DavClient, base: &Url, home: &U
     }
     lock(store).mark_synced_now();
     Ok(report)
+}
+
+/// The events of every calendar that holds events, overlapping `from..to`,
+/// in order. A calendar that can't be read is left out.
+pub async fn fetch_events(client: &DavClient, base: &Url, home: &Url, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<CalEvent>> {
+    let calendars = client.list_calendars(home).await?;
+    let mut out = Vec::new();
+    for cal in calendars.iter().filter(|c| c.supports_event) {
+        let url = join(base, &cal.href)?;
+        let objects = match client.events(&url, from, to).await {
+            Ok(o) => o,
+            Err(e) if e.is_offline() || matches!(e, Error::Unauthorized) => return Err(e),
+            Err(e) => {
+                log::warn!("reading events of {} failed: {e}", cal.href);
+                continue;
+            }
+        };
+        for o in objects {
+            out.extend(events::parse(&o.href, &cal.href, cal.color.as_deref(), &o.data, from, to));
+        }
+    }
+    out.sort_by(|a, b| b.all_day.cmp(&a.all_day).then_with(|| a.start.cmp(&b.start)).then_with(|| a.title.cmp(&b.title)));
+    Ok(out)
 }

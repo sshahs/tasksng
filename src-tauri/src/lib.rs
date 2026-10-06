@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use tasks_core::settings::{self, Settings, SettingsPatch};
 use tasks_core::alarms::{Alarms, DueReminder};
 use tasks_core::dav::{normalize_url, Credentials, DavClient};
+use tasks_core::events::{self, EventsResult};
 use tasks_core::model::{NewTask, PatchOutcome, Task, TaskPatch, TaskStatus};
 use tasks_core::store::{write_atomic, Account, Resolution, Snapshot, Store, TaskList};
 use tasks_core::sync::{self, SyncReport};
@@ -450,6 +451,32 @@ fn undo_delete(app: AppHandle, state: State<'_, AppState>, token: u64) -> Result
     };
     after_local_change(&app);
     Ok(snapshot)
+}
+
+/// Calendar events for the day planner: fresh from the server when it can
+/// be reached, otherwise as last downloaded.
+#[tauri::command]
+async fn get_events(app: AppHandle, state: State<'_, AppState>, from: String, to: String) -> Result<EventsResult, String> {
+    let (start, end) = events::parse_range(&from, &to).map_err(err)?;
+    let cached = || {
+        state.store().cached_events(&from, &to).map(|c| (c.events.clone(), Some(c.fetched_at.clone()))).unwrap_or_default()
+    };
+    let Some(conn) = state.connection() else {
+        let (events, fetched_at) = cached();
+        return Ok(EventsResult { events, fetched_at, error: None });
+    };
+    match sync::fetch_events(&conn.client, &conn.home, &conn.home, start, end).await {
+        Ok(events) => {
+            state.store().cache_events(&from, &to, events.clone());
+            schedule_save(&app);
+            let fetched_at = state.store().cached_events(&from, &to).map(|c| c.fetched_at.clone());
+            Ok(EventsResult { events, fetched_at, error: None })
+        }
+        Err(e) => {
+            let (events, fetched_at) = cached();
+            Ok(EventsResult { events, fetched_at, error: Some(e.to_string()) })
+        }
+    }
 }
 
 /// Settles a task that was changed on two devices.
@@ -1254,6 +1281,7 @@ pub fn run() {
             delete_tasks,
             undo_delete,
             resolve_conflict,
+            get_events,
             create_list,
             update_list,
             delete_list,

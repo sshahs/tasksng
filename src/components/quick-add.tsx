@@ -20,7 +20,8 @@ import { cn } from "@/lib/utils";
 import { PriorityFlag, PRIORITIES, priorityLevel } from "./priority";
 import { repeatLabel } from "./repeat";
 
-export function QuickAdd() {
+/** `dueOn`: new tasks are due that day unless the text says otherwise (day planner). */
+export function QuickAdd({ dueOn, className }: { dueOn?: string; className?: string } = {}) {
   const view = useStore((s) => s.view);
   const lists = useStore((s) => s.lists);
   const focusQuickAdd = useStore((s) => s.focusQuickAdd);
@@ -57,6 +58,7 @@ export function QuickAdd() {
     if (!parsed.summary || !listId) return;
     let { due, priority } = parsed;
     let categories = parsed.categories;
+    if (!due && dueOn) due = dueOn;
     // Smart views give new tasks the property that makes them show up there.
     if (!due && view === "today") due = dateOnly(new Date());
     if (!due && view === "upcoming") due = dateOnly(new Date(Date.now() + 86_400_000));
@@ -92,7 +94,7 @@ export function QuickAdd() {
   if (!writable.length) return null;
 
   return (
-    <div className="px-4 pb-2">
+    <div className={cn("px-4 pb-2", className)}>
       <div
         className={cn(
           "bg-muted/50 flex items-center gap-2 rounded-lg border border-transparent px-3 transition-[background-color,border-color,box-shadow] duration-200",

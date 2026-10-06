@@ -124,6 +124,32 @@ impl IcalTime {
     }
 }
 
+/// Minutes in an iCalendar duration such as `PT1H30M` or `P1D`.
+pub fn duration_minutes(value: &str) -> Option<u32> {
+    let v = value.trim().trim_start_matches('+');
+    let rest = v.strip_prefix('P')?;
+    let (mut total, mut num, mut time) = (0u64, String::new(), false);
+    for c in rest.chars() {
+        match c {
+            '0'..='9' => num.push(c),
+            'T' => time = true,
+            _ => {
+                let n: u64 = num.parse().ok()?;
+                num.clear();
+                total += match (c, time) {
+                    ('W', false) => n * 7 * 24 * 60,
+                    ('D', false) => n * 24 * 60,
+                    ('H', true) => n * 60,
+                    ('M', true) => n,
+                    ('S', true) => n / 60,
+                    _ => return None,
+                };
+            }
+        }
+    }
+    (num.is_empty() && total > 0).then(|| u32::try_from(total).ok()).flatten()
+}
+
 /// Applies a calendar shift in local time so that "every day at 9:00" stays
 /// at 9:00 across DST changes.
 fn shift_utc_local(dt: DateTime<Utc>, f: impl Fn(NaiveDateTime) -> NaiveDateTime) -> DateTime<Utc> {

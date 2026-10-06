@@ -12,6 +12,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::dav::{RemoteCalendar, RemoteObject, WriteResult};
+use crate::events::CalEvent;
 use crate::model::{self, NewTask, PatchOutcome, Task, TaskPatch};
 use crate::{Error, Result};
 
@@ -79,6 +80,8 @@ struct Persisted {
     last_sync: Option<String>,
     #[serde(default)]
     conflicts: Vec<Conflict>,
+    #[serde(default)]
+    events: Vec<CachedEvents>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -150,7 +153,23 @@ fn same_content(a: &Task, b: &Task) -> bool {
         && a.parent_uid == b.parent_uid
         && a.rrule == b.rrule
         && a.reminders == b.reminders
+        && a.planned == b.planned
+        && a.planned_minutes == b.planned_minutes
 }
+
+/// Calendar events of a day (or any range) as last downloaded, so the day
+/// planner shows them offline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedEvents {
+    pub from: String,
+    pub to: String,
+    pub fetched_at: String,
+    pub events: Vec<CalEvent>,
+}
+
+/// How many ranges of events are kept.
+const EVENT_CACHE: usize = 31;
 
 /// A change that still has to be sent to the server.
 #[derive(Debug, Clone)]
@@ -183,6 +202,7 @@ pub struct Store {
     next_undo: u64,
     unsaved: bool,
     conflicts: HashMap<String, Conflict>,
+    events: Vec<CachedEvents>,
 }
 
 /// Hrefs are compared percent-decoded so `/a%20b.ics` and `/a b.ics` match.
@@ -205,6 +225,7 @@ impl Store {
             next_undo: 1,
             unsaved: false,
             conflicts: HashMap::new(),
+            events: Vec::new(),
         }
     }
 
@@ -228,6 +249,7 @@ impl Store {
         store.lists = data.lists;
         store.last_sync = data.last_sync;
         store.conflicts = data.conflicts.into_iter().map(|c| (key_of(&c.href), c)).collect();
+        store.events = data.events;
         for e in data.entries {
             store.next_version = store.next_version.max(e.version + 1);
             let key = key_of(&e.href);
@@ -284,6 +306,7 @@ impl Store {
                 c.sort_by(|a, b| a.href.cmp(&b.href));
                 c
             },
+            events: self.events.clone(),
         };
         match serde_json::to_vec(&data) {
             Ok(bytes) => Some((path, bytes)),
@@ -385,6 +408,7 @@ impl Store {
             self.entries.clear();
             self.views.clear();
             self.conflicts.clear();
+            self.events.clear();
             self.last_sync = None;
         }
         self.account = Some(account);
@@ -398,8 +422,32 @@ impl Store {
         self.views.clear();
         self.undo.clear();
         self.conflicts.clear();
+        self.events.clear();
         self.last_sync = None;
         self.bump();
+    }
+
+    // ----------------------------------------------------------------------
+    // Calendar events (day planner)
+
+    /// Remembers the events downloaded for a range.
+    pub fn cache_events(&mut self, from: &str, to: &str, events: Vec<CalEvent>) {
+        self.events.retain(|c| !(c.from == from && c.to == to));
+        self.events.push(CachedEvents {
+            from: from.to_string(),
+            to: to.to_string(),
+            fetched_at: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            events,
+        });
+        if self.events.len() > EVENT_CACHE {
+            self.events.remove(0);
+        }
+        self.unsaved = true;
+    }
+
+    /// The events last downloaded for exactly this range.
+    pub fn cached_events(&self, from: &str, to: &str) -> Option<&CachedEvents> {
+        self.events.iter().find(|c| c.from == from && c.to == to)
     }
 
     // ----------------------------------------------------------------------
@@ -963,7 +1011,7 @@ mod tests {
             color: None,
             order: None,
             ctag: Some("1".into()),
-            supports_todo: true,
+            supports_todo: true, supports_event: true,
             read_only: false,
         }]);
         s
@@ -1027,8 +1075,8 @@ mod tests {
     fn subtasks_are_deleted_and_moved_with_parent() {
         let mut s = store_with_list();
         s.update_lists(&[
-            RemoteCalendar { href: L.into(), name: "Tasks".into(), color: None, order: None, ctag: Some("1".into()), supports_todo: true, read_only: false },
-            RemoteCalendar { href: "/other/".into(), name: "Other".into(), color: None, order: None, ctag: Some("1".into()), supports_todo: true, read_only: false },
+            RemoteCalendar { href: L.into(), name: "Tasks".into(), color: None, order: None, ctag: Some("1".into()), supports_todo: true, supports_event: true, read_only: false },
+            RemoteCalendar { href: "/other/".into(), name: "Other".into(), color: None, order: None, ctag: Some("1".into()), supports_todo: true, supports_event: true, read_only: false },
         ]);
         let p = s.create_task(L, &new("parent")).unwrap();
         let c = s.create_task(L, &NewTask { summary: "child".into(), parent_uid: Some(p.uid.clone()), ..Default::default() }).unwrap();
@@ -1093,7 +1141,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cache.json");
         let mut s = Store::open(&path);
-        s.update_lists(&[RemoteCalendar { href: L.into(), name: "Tasks".into(), color: Some("#FF0000".into()), order: None, ctag: None, supports_todo: true, read_only: false }]);
+        s.update_lists(&[RemoteCalendar { href: L.into(), name: "Tasks".into(), color: Some("#FF0000".into()), order: None, ctag: None, supports_todo: true, supports_event: true, read_only: false }]);
         let t = s.create_task(L, &new("persist me")).unwrap();
         s.save_now().unwrap();
         let s2 = Store::open(&path);
@@ -1105,7 +1153,7 @@ mod tests {
     #[test]
     fn read_only_lists_reject_edits() {
         let mut s = Store::in_memory();
-        s.update_lists(&[RemoteCalendar { href: L.into(), name: "Shared".into(), color: None, order: None, ctag: None, supports_todo: true, read_only: true }]);
+        s.update_lists(&[RemoteCalendar { href: L.into(), name: "Shared".into(), color: None, order: None, ctag: None, supports_todo: true, supports_event: true, read_only: true }]);
         assert!(s.create_task(L, &new("x")).is_err());
     }
 
@@ -1163,7 +1211,7 @@ mod tests {
         let path = dir.path().join("cache.json");
         let mut s = Store::open(&path);
         s.update_lists(&store_with_list().lists.iter().map(|l| RemoteCalendar {
-            href: l.id.clone(), name: l.name.clone(), color: None, order: None, ctag: Some("1".into()), supports_todo: true, read_only: false,
+            href: l.id.clone(), name: l.name.clone(), color: None, order: None, ctag: Some("1".into()), supports_todo: true, supports_event: true, read_only: false,
         }).collect::<Vec<_>>());
         let t = synced(&mut s, "base");
         let theirs = server_copy(&s, &t.id, "SUMMARY:base", "SUMMARY:base\r\nPRIORITY:1");

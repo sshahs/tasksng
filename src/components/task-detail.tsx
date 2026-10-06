@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeftIcon,
   BellIcon,
+  CalendarClockIcon,
   CalendarIcon,
   CircleDashedIcon,
   CloudUploadIcon,
@@ -42,6 +43,7 @@ import { cn } from "@/lib/utils";
 import { compareOpen } from "@/lib/views";
 import { DuePicker } from "./due-picker";
 import { Markdown } from "./markdown";
+import { PlanPicker } from "./plan-picker";
 import { PRIORITIES, PriorityFlag, priorityBorder, priorityLevel } from "./priority";
 import { ReminderPicker } from "./reminder-picker";
 import { REPEAT_OPTIONS, repeatValue } from "./repeat";
@@ -335,6 +337,9 @@ function DetailBody({ task, mobile }: { task: Task; mobile: boolean }) {
               disabled={readOnly}
               onChange={(start) => update({ start })}
             />
+          </Row>
+          <Row icon={<CalendarClockIcon />}>
+            <PlanPicker task={task} readOnly={readOnly} onChange={update} />
           </Row>
           <Row icon={<BellIcon />}>
             <ReminderPicker task={task} readOnly={readOnly} onChange={(reminders) => update({ reminders })} />

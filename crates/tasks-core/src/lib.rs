@@ -4,6 +4,7 @@
 pub mod alarms;
 pub mod dates;
 pub mod dav;
+pub mod events;
 pub mod ical;
 pub mod model;
 pub mod recur;

@@ -6,6 +6,7 @@
 
 use std::sync::Mutex;
 
+use chrono::TimeZone;
 use reqwest::Url;
 use tasks_core::dav::{normalize_url, Credentials, DavClient, PutCondition, WriteResult};
 use tasks_core::model::{NewTask, PatchOutcome, TaskPatch, TaskStatus};
@@ -389,4 +390,49 @@ async fn incremental_sync_downloads_only_changes() {
     let count = b.store().snapshot().tasks.iter().filter(|t| t.list_id == list).count();
     assert_eq!(count, 30);
     a.drop_list(&list).await;
+}
+
+#[tokio::test]
+async fn day_planner_reads_calendar_events() {
+    let url = need_server!();
+    let a = Device::connect(&url, "test", "test").await.unwrap();
+    let calendars = a.client.list_calendars(&a.home).await.unwrap();
+    let cal = calendars.iter().find(|c| c.supports_event).expect("a calendar for events");
+    let base = a.home.join(&cal.href).unwrap();
+    let pid = std::process::id();
+    let once = base.join(&format!("planner-once-{pid}.ics")).unwrap();
+    let daily = base.join(&format!("planner-daily-{pid}.ics")).unwrap();
+    let event = |uid: &str, body: &str| {
+        format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:test\r\nBEGIN:VEVENT\r\nUID:{uid}-{pid}\r\nDTSTAMP:20300101T000000Z\r\n{body}END:VEVENT\r\nEND:VCALENDAR\r\n")
+    };
+    let ok = |r: WriteResult| assert!(matches!(r, WriteResult::Ok { .. }), "{r:?}");
+    ok(a.client.put(&once, &event("once", "DTSTART:20300105T090000Z\r\nDTEND:20300105T100000Z\r\nSUMMARY:Dentist\r\n"), &PutCondition::Create).await.unwrap());
+    ok(a.client
+        .put(&daily, &event("daily", "DTSTART:20300101T080000Z\r\nDURATION:PT30M\r\nRRULE:FREQ=DAILY;COUNT=10\r\nSUMMARY:Stand-up\r\n"), &PutCondition::Create)
+        .await
+        .unwrap());
+
+    let day = |d: u32| {
+        let from = chrono::Utc.with_ymd_and_hms(2030, 1, d, 0, 0, 0).unwrap();
+        (from, from + chrono::Duration::days(1))
+    };
+    let mine = |events: Vec<tasks_core::events::CalEvent>| -> Vec<(String, String, String)> {
+        events.into_iter().filter(|e| e.title == "Dentist" || e.title == "Stand-up").map(|e| (e.title, e.start, e.end)).collect()
+    };
+    let (from, to) = day(5);
+    let events = mine(sync::fetch_events(&a.client, &a.home, &a.home, from, to).await.unwrap());
+    assert_eq!(
+        events,
+        vec![
+            ("Stand-up".into(), "2030-01-05T08:00:00Z".into(), "2030-01-05T08:30:00Z".into()),
+            ("Dentist".into(), "2030-01-05T09:00:00Z".into(), "2030-01-05T10:00:00Z".into()),
+        ]
+    );
+    // The repeating event is expanded into that day's occurrence only.
+    let (from, to) = day(6);
+    let events = mine(sync::fetch_events(&a.client, &a.home, &a.home, from, to).await.unwrap());
+    assert_eq!(events, vec![("Stand-up".into(), "2030-01-06T08:00:00Z".into(), "2030-01-06T08:30:00Z".into())]);
+
+    a.client.delete(&once, None).await.unwrap();
+    a.client.delete(&daily, None).await.unwrap();
 }

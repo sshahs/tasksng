@@ -6,6 +6,7 @@ pub mod xml;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use reqwest::header::{HeaderMap, AUTHORIZATION, CONTENT_TYPE, ETAG, LOCATION, WWW_AUTHENTICATE};
 use reqwest::{Method, StatusCode, Url};
 use serde::{Deserialize, Serialize};
@@ -51,6 +52,8 @@ pub struct RemoteCalendar {
     pub order: Option<i64>,
     pub ctag: Option<String>,
     pub supports_todo: bool,
+    /// Holds events (shown in the day planner).
+    pub supports_event: bool,
     pub read_only: bool,
 }
 
@@ -439,12 +442,14 @@ impl DavClient {
                 continue;
             }
             let href = href_path(&r.href);
-            let supports_todo = match r.prop(CALDAV, "supported-calendar-component-set") {
+            let supports = |comp: &str| match r.prop(CALDAV, "supported-calendar-component-set") {
                 Some(set) => set
                     .children_named(CALDAV, "comp")
-                    .any(|c| c.attr("name").is_some_and(|n| n.eq_ignore_ascii_case("VTODO"))),
+                    .any(|c| c.attr("name").is_some_and(|n| n.eq_ignore_ascii_case(comp))),
                 None => true,
             };
+            let supports_todo = supports("VTODO");
+            let supports_event = supports("VEVENT");
             let read_only = r.prop(DAV, "current-user-privilege-set").is_some_and(|set| {
                 !set.children_named(DAV, "privilege").any(|p| {
                     p.child(DAV, "write").is_some() || p.child(DAV, "all").is_some() || p.child(DAV, "write-content").is_some()
@@ -461,6 +466,7 @@ impl DavClient {
                 order: r.prop_text(ICAL, "calendar-order").and_then(|o| o.parse().ok()),
                 ctag: r.prop_text(CS, "getctag").or_else(|| r.prop_text(DAV, "sync-token")),
                 supports_todo,
+                supports_event,
                 read_only,
             });
         }
@@ -491,6 +497,25 @@ impl DavClient {
   <c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VTODO"/></c:comp-filter></c:filter>
 </c:calendar-query>"#;
         let items = self.multistatus("REPORT", calendar, "1", body.to_string()).await?;
+        Ok(collect_objects(items))
+    }
+
+    /// Events overlapping `from..to`. The server expands repeating events
+    /// into their occurrences in that range (with times in UTC).
+    pub async fn events(&self, calendar: &Url, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<RemoteObject>, Error> {
+        let (start, end) = (from.format("%Y%m%dT%H%M%SZ"), to.format("%Y%m%dT%H%M%SZ"));
+        let body = format!(
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop><c:calendar-data><c:expand start="{start}" end="{end}"/></c:calendar-data></d:prop>
+  <c:filter>
+    <c:comp-filter name="VCALENDAR">
+      <c:comp-filter name="VEVENT"><c:time-range start="{start}" end="{end}"/></c:comp-filter>
+    </c:comp-filter>
+  </c:filter>
+</c:calendar-query>"#
+        );
+        let items = self.multistatus("REPORT", calendar, "1", body).await?;
         Ok(collect_objects(items))
     }
 

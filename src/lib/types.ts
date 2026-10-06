@@ -28,6 +28,10 @@ export interface Task {
   modified: string | null;
   sortOrder: number | null;
   reminders: Reminder[];
+  /** Planned for this time in the day planner (UTC instant). */
+  planned: string | null;
+  /** How long it is planned for. */
+  plannedMinutes: number | null;
   /** Not yet saved to the server. */
   pending: boolean;
 }
@@ -56,6 +60,27 @@ export interface Snapshot {
   lastSync: string | null;
   pending: number;
   conflicts: ConflictView[];
+}
+
+/** A calendar event shown in the day planner (read only). */
+export interface CalEvent {
+  id: string;
+  calendarId: string;
+  title: string;
+  /** `YYYY-MM-DD` for all-day events, otherwise a UTC instant. */
+  start: string;
+  /** Exclusive. */
+  end: string;
+  allDay: boolean;
+  location: string | null;
+  color: string | null;
+}
+
+export interface EventsResult {
+  events: CalEvent[];
+  fetchedAt: string | null;
+  /** Why they couldn't be refreshed (they come from the cache then). */
+  error: string | null;
 }
 
 /** A task changed on this device and another one (or deleted on one of them). */
@@ -106,6 +131,8 @@ export interface TaskPatch {
   rrule?: string | null;
   sortOrder?: number;
   reminders?: Reminder[];
+  planned?: string | null;
+  plannedMinutes?: number | null;
 }
 
 export interface TaskUpdate {

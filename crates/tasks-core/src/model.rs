@@ -4,7 +4,7 @@
 use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::dates::{utc_stamp, IcalTime};
+use crate::dates::{self, utc_stamp, IcalTime};
 use crate::ical::{self, Component, Property};
 use crate::recur::{self, Advance};
 use crate::reminders::{self, Reminder};
@@ -15,6 +15,11 @@ pub const PRODID: &str = "-//TasksNG//TasksNG//EN";
 /// to say this, so it lives next to the RRULE; the UI sees it as a
 /// `FROM=COMPLETION` part of the rule.
 const REPEAT_FROM: &str = "X-TASKSNG-REPEAT-FROM";
+/// When the user plans to work on the task (day planner), and for how long.
+/// Kept apart from DTSTART/DUE: a slot at 14:00 on a task due "today" (an
+/// all-day date) would otherwise force both to become times (RFC 5545).
+const PLANNED: &str = "X-TASKSNG-PLANNED";
+const PLANNED_DURATION: &str = "X-TASKSNG-PLANNED-DURATION";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -73,6 +78,10 @@ pub struct Task {
     pub modified: Option<String>,
     pub sort_order: Option<i64>,
     pub reminders: Vec<Reminder>,
+    /// Planned for this time in the day planner (UTC).
+    pub planned: Option<String>,
+    /// How long it is planned for, in minutes.
+    pub planned_minutes: Option<u32>,
     /// Local changes that have not reached the server yet.
     pub pending: bool,
 }
@@ -113,6 +122,10 @@ pub struct TaskPatch {
     pub rrule: Option<Option<String>>,
     pub sort_order: Option<i64>,
     pub reminders: Option<Vec<Reminder>>,
+    #[serde(deserialize_with = "double_option")]
+    pub planned: Option<Option<String>>,
+    #[serde(deserialize_with = "double_option")]
+    pub planned_minutes: Option<Option<u32>>,
 }
 
 fn double_option<'de, D, T>(de: D) -> Result<Option<Option<T>>, D::Error>
@@ -215,9 +228,12 @@ pub fn task_from_ics(id: &str, list_id: &str, ics: &str, pending: bool) -> Resul
         modified: time_ui(todo, "LAST-MODIFIED"),
         sort_order,
         reminders: reminders::read(todo),
+        planned: todo.get(PLANNED).and_then(IcalTime::from_property).map(|t| IcalTime::Utc(t.instant()).to_ui()),
+        planned_minutes: todo.get(PLANNED_DURATION).and_then(|p| dates::duration_minutes(&p.value)),
         pending,
     })
 }
+
 
 fn repeats_from_completion(todo: &Component) -> bool {
     todo.get(REPEAT_FROM).is_some_and(|p| p.value.trim().eq_ignore_ascii_case("COMPLETION"))
@@ -352,6 +368,26 @@ fn apply_to_todo(todo: &mut Component, patch: &TaskPatch, now: DateTime<Utc>) ->
     if let Some(list) = &patch.reminders {
         reminders::apply(todo, list);
     }
+    if let Some(planned) = &patch.planned {
+        match planned {
+            Some(p) => {
+                let t = parse_time(p)?;
+                if t.is_date() {
+                    return Err(ModelError::BadDate(p.clone()));
+                }
+                todo.set(IcalTime::Utc(t.instant()).to_property(PLANNED));
+            }
+            None => {
+                todo.remove(PLANNED);
+            }
+        }
+    }
+    if let Some(minutes) = &patch.planned_minutes {
+        match minutes.filter(|m| *m > 0) {
+            Some(m) => todo.set(Property::new(PLANNED_DURATION, format!("PT{m}M"))),
+            None => todo.remove(PLANNED_DURATION),
+        }
+    }
     if let Some(status) = patch.status {
         outcome = set_status(todo, status, now);
     }
@@ -431,6 +467,8 @@ fn advance_recurrence(todo: &mut Component, now: DateTime<Utc>) -> Option<String
     }
     // Reminders at a fixed time move along with the task.
     reminders::shift_absolute(todo, shift);
+    // The plan was for this occurrence.
+    todo.remove(PLANNED);
     todo.set(Property::new("STATUS", "NEEDS-ACTION"));
     todo.remove("COMPLETED");
     todo.remove("PERCENT-COMPLETE");
@@ -667,6 +705,55 @@ mod tests {
         let t = task_from_ics("a", "b", &out, false).unwrap();
         assert!(t.due.is_some());
         assert_eq!(t.rrule.as_deref(), Some("FREQ=DAILY"));
+    }
+
+    #[test]
+    fn planned_time_is_kept_apart_from_due_and_start() {
+        let ics = build_ics("u", &NewTask { summary: "write".into(), due: Some("2026-10-04".into()), ..Default::default() }, now()).unwrap();
+        let patch = TaskPatch {
+            planned: Some(Some("2026-10-04T14:30:00+02:00".into())),
+            planned_minutes: Some(Some(90)),
+            ..Default::default()
+        };
+        let (out, _) = patch_ics(&ics, &patch, now()).unwrap();
+        assert!(out.contains("X-TASKSNG-PLANNED:20261004T123000Z\r\n"), "{out}");
+        assert!(out.contains("X-TASKSNG-PLANNED-DURATION:PT90M\r\n"));
+        let t = task_from_ics("a", "b", &out, false).unwrap();
+        assert_eq!(t.planned.as_deref(), Some("2026-10-04T12:30:00Z"));
+        assert_eq!(t.planned_minutes, Some(90));
+        // The due date stays an all-day date and no start appears.
+        assert_eq!((t.due.as_deref(), t.start.as_deref()), (Some("2026-10-04"), None));
+
+        // A plan needs a time of day; clearing it keeps the length as an estimate.
+        assert!(patch_ics(&out, &TaskPatch { planned: Some(Some("2026-10-05".into())), ..Default::default() }, now()).is_err());
+        let (out, _) = patch_ics(&out, &TaskPatch { planned: Some(None), ..Default::default() }, now()).unwrap();
+        let t = task_from_ics("a", "b", &out, false).unwrap();
+        assert_eq!((t.planned, t.planned_minutes), (None, Some(90)));
+    }
+
+    #[test]
+    fn reads_durations() {
+        use crate::dates::duration_minutes;
+        assert_eq!(duration_minutes("PT45M"), Some(45));
+        assert_eq!(duration_minutes("PT1H30M"), Some(90));
+        assert_eq!(duration_minutes("P1DT2H"), Some(26 * 60));
+        assert_eq!(duration_minutes("PT0S"), None);
+        assert_eq!(duration_minutes("P1Y"), None);
+        assert_eq!(duration_minutes("nonsense"), None);
+    }
+
+    #[test]
+    fn a_repeating_task_drops_its_plan_when_it_moves_on() {
+        let ics = build_ics(
+            "u",
+            &NewTask { summary: "water plants".into(), due: Some("2026-10-04".into()), rrule: Some("FREQ=WEEKLY".into()), ..Default::default() },
+            now(),
+        )
+        .unwrap();
+        let plan = TaskPatch { planned: Some(Some("2026-10-04T08:00:00Z".into())), ..Default::default() };
+        let (ics, _) = patch_ics(&ics, &plan, now()).unwrap();
+        let (out, _) = patch_ics(&ics, &TaskPatch { status: Some(TaskStatus::Completed), ..Default::default() }, now()).unwrap();
+        assert_eq!(task_from_ics("a", "b", &out, false).unwrap().planned, None);
     }
 
     #[test]

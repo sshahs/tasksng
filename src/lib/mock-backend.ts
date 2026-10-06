@@ -5,7 +5,9 @@
 import { addDays, format } from "date-fns";
 
 import type {
+  CalEvent,
   ConflictView,
+  EventsResult,
   NewTask,
   Resolution,
   Settings,
@@ -57,6 +59,8 @@ export function createMockBackend() {
       modified: null,
       sortOrder: null,
       reminders: [],
+      planned: null,
+      plannedMinutes: null,
       pending: false,
       ...p,
     };
@@ -92,6 +96,41 @@ export function createMockBackend() {
   for (let i = 0; i < many; i++) {
     tasks.push(mk([P, W, G][i % 3], { summary: `Generated task ${i + 1}`, priority: [0, 1, 5, 9][i % 4], due: i % 5 ? null : day(i % 9) }));
   }
+  // Something already planned today, at 11:00 local time.
+  const plannedTask = tasks.find((t) => t.summary === "Draft announcement blog post");
+  if (plannedTask) {
+    const at = new Date();
+    at.setHours(11, 0, 0, 0);
+    Object.assign(plannedTask, { planned: at.toISOString().replace(/\.\d{3}Z$/, "Z"), plannedMinutes: 60 });
+  }
+  /** Demo calendar events for a day. */
+  const eventsFor = (from: Date): CalEvent[] => {
+    const at = (h: number, m = 0) => {
+      const d = new Date(from);
+      d.setHours(h, m, 0, 0);
+      return d.toISOString().replace(/\.\d{3}Z$/, "Z");
+    };
+    const weekday = from.getDay() % 6 !== 0;
+    const ev = (id: string, title: string, start: string, end: string, color: string, location: string | null = null): CalEvent => ({
+      id: `/dav.php/calendars/demo/default/${id}-${from.getDate()}.ics`,
+      calendarId: "/dav.php/calendars/demo/default/",
+      title,
+      start,
+      end,
+      allDay: false,
+      location,
+      color,
+    });
+    const out: CalEvent[] = [];
+    if (weekday) out.push(ev("standup", "Stand-up", at(9, 30), at(9, 45), "#8B5CF6", "Video call"));
+    out.push(ev("lunch", "Lunch with Sam", at(12, 30), at(13, 30), "#10B981", "Café Nero"));
+    if (weekday) out.push(ev("review", "Design review", at(15), at(16), "#8B5CF6"), ev("1on1", "1:1 with Alex", at(15, 30), at(16), "#F59E0B"));
+    if (from.getDay() === 5) {
+      out.unshift({ ...ev("bday", "Mum’s birthday", format(from, "yyyy-MM-dd"), format(addDays(from, 1), "yyyy-MM-dd"), "#EC4899"), allDay: true });
+    }
+    return out;
+  };
+
   // `?conflict` pretends "Call grandma" was also changed on another device.
   let conflicts: ConflictView[] = [];
   if (new URLSearchParams(location.search).has("conflict")) {
@@ -150,6 +189,8 @@ export function createMockBackend() {
     if (p.parentUid !== undefined) next.parentUid = p.parentUid;
     if (p.sortOrder !== undefined) next.sortOrder = p.sortOrder;
     if (p.reminders !== undefined) next.reminders = p.reminders;
+    if (p.planned !== undefined) next.planned = p.planned;
+    if (p.plannedMinutes !== undefined) next.plannedMinutes = p.plannedMinutes;
     if (p.rrule !== undefined) {
       next.rrule = p.rrule;
       if (p.rrule && !next.due) next.due = day(0);
@@ -250,6 +291,11 @@ export function createMockBackend() {
       trash.set(++token, victims);
       bump();
       return { token, snapshot: snapshot() };
+    },
+    get_events: async (a) => {
+      await sleep(250);
+      const from = new Date(String(a.from));
+      return { events: signedIn ? eventsFor(from) : [], fetchedAt: new Date().toISOString(), error: null } satisfies EventsResult;
     },
     resolve_conflict: (a) => {
       const c = conflicts.find((x) => x.id === a.id);

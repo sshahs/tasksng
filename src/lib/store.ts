@@ -29,6 +29,7 @@ export type { SavedSearch, SmartView, ViewId };
 
 export const SMART_VIEWS: { id: SmartView; label: string }[] = [
   { id: "today", label: "Today" },
+  { id: "plan", label: "Plan" },
   { id: "upcoming", label: "Upcoming" },
   { id: "important", label: "Important" },
   { id: "all", label: "All tasks" },
@@ -135,6 +136,8 @@ function sameTask(a: Task, b: Task): boolean {
     a.pending === b.pending &&
     a.modified === b.modified &&
     a.sortOrder === b.sortOrder &&
+    a.planned === b.planned &&
+    a.plannedMinutes === b.plannedMinutes &&
     a.categories.join("\u0000") === b.categories.join("\u0000") &&
     JSON.stringify(a.reminders) === JSON.stringify(b.reminders)
   );

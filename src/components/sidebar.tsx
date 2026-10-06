@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ArrowUpCircleIcon,
+  CalendarClockIcon,
   CalendarDaysIcon,
   ChevronRightIcon,
   FlagIcon,
@@ -39,6 +40,7 @@ import { SyncIndicator } from "./sync-indicator";
 
 const ICONS: Record<SmartView, React.ReactNode> = {
   today: <SunIcon className="text-amber-500" />,
+  plan: <CalendarClockIcon className="text-violet-500" />,
   upcoming: <CalendarDaysIcon className="text-rose-500" />,
   important: <FlagIcon className="text-priority-high" />,
   all: <InboxIcon className="text-sky-500" />,

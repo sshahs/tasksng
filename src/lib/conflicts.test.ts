@@ -23,6 +23,8 @@ function task(p: Partial<Task>): Task {
     modified: "2026-10-06T10:00:00Z",
     sortOrder: null,
     reminders: [],
+    planned: null,
+    plannedMinutes: null,
     pending: false,
     ...p,
   };

@@ -7,7 +7,7 @@ import type { Task, TaskList } from "./types";
 
 export { compareDone, compareOpen };
 
-export type SmartView = "today" | "upcoming" | "important" | "all";
+export type SmartView = "today" | "plan" | "upcoming" | "important" | "all";
 export type ViewId = SmartView | `list:${string}` | `tag:${string}` | `search:${string}`;
 
 export interface SavedSearch {
@@ -76,7 +76,9 @@ function inView(view: ViewId, t: Task, now: Date, q: Query | null, ctx: QueryCon
   const later = !t.completed && startsLater(t, now);
   if (q) return matchesQuery(t, q, ctx);
   switch (view) {
-    case "today": {
+    // The day planner's tray holds today's tasks.
+    case "today":
+    case "plan": {
       const due = parseDue(t.due);
       if (t.completed) return !!t.completedAt && sameDay(new Date(t.completedAt), now);
       return isOverdue(due, now) || isDueToday(due, now) || startsToday(t, now);
@@ -220,6 +222,8 @@ export function countOpen(
   const ctx = context(opts, now);
   const q = viewQuery(view, opts.savedSearches);
   let n = 0;
+  // The planner counts what is planned for today.
+  if (view === "plan") return all.filter((t) => !t.completed && plannedOn(t, now)).length;
   for (const t of all) {
     if (t.completed || !inView(view, t, now, q, ctx)) continue;
     // Counts match the main section, without tasks that start later.
@@ -244,6 +248,11 @@ export function tagCounts(all: Task[], now = new Date()): { tag: string; count: 
 }
 
 /** Whether a task shows up in the given view (used to jump to a task). */
+/** Planned for that (local) day in the day planner. */
+export function plannedOn(t: Task, day: Date): boolean {
+  return !!t.planned && sameDay(new Date(t.planned), day);
+}
+
 export function isInView(view: ViewId, t: Task, opts: Pick<ViewOptions, "lists" | "savedSearches"> = {}, now = new Date()) {
   return inView(view, t, now, viewQuery(view, opts.savedSearches), context(opts, now));
 }

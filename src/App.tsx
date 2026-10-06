@@ -5,6 +5,7 @@ import { AnimatePresence, domMax, LazyMotion, m, MotionConfig } from "motion/rea
 import { CommandPalette } from "@/components/command-palette";
 import { ConflictBanner, ConflictDialog } from "@/components/conflict-dialog";
 import { ListDialog } from "@/components/list-dialog";
+import { Planner } from "@/components/planner";
 import { SearchDialog, TagDialog } from "@/components/search-dialog";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { SetupScreen } from "@/components/setup-screen";
@@ -85,6 +86,7 @@ export default function App() {
   const ready = useStore((s) => s.ready);
   const account = useStore((s) => s.account);
   const sidebarOpen = useStore((s) => s.sidebarOpen);
+  const view = useStore((s) => s.view);
   const mobile = useIsMobile();
   const authRequired = useStore((s) => s.status.state === "auth-required");
   const [fatal, setFatal] = useState<string | null>(null);
@@ -184,7 +186,7 @@ export default function App() {
                 )}
                 <ConflictBanner />
                 <div className="relative flex min-h-0 flex-1">
-                  <TaskPane />
+                  {view === "plan" ? <Planner /> : <TaskPane />}
                   <TaskDetail />
                 </div>
               </m.main>

@@ -13,6 +13,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tasks_core::dav::{normalize_url, Credentials, DavClient};
+use tasks_core::events::{self, EventsResult};
 use tasks_core::model::{NewTask, PatchOutcome, Task, TaskPatch, TaskStatus};
 use tasks_core::settings::{Settings, SettingsPatch};
 use tasks_core::store::{write_atomic, Account, Resolution, Snapshot, Store, TaskList};
@@ -430,6 +431,7 @@ async fn dispatch(state: &Arc<AppState>, cmd: &str, headers: &HeaderMap, body: &
             ok(snapshot)
         }
         "create_list" | "update_list" | "delete_list" => list_command(&user, cmd, body).await,
+        "get_events" => get_events(&user, body).await,
         "get_settings" => ok(settings_view(user.settings())),
         "update_settings" => {
             #[derive(Deserialize)]
@@ -550,6 +552,37 @@ async fn sign_out(state: &Arc<AppState>, headers: &HeaderMap, user: &Arc<User>) 
     let mut response = Json(user.store().snapshot()).into_response();
     response.headers_mut().insert(header::SET_COOKIE, cookie(state, headers, "", 0));
     Ok(response)
+}
+
+/// Calendar events for the day planner: fresh when the server can be
+/// reached, otherwise as last downloaded.
+async fn get_events(user: &Arc<User>, body: &Value) -> ApiResult {
+    #[derive(Deserialize)]
+    struct A {
+        from: String,
+        to: String,
+    }
+    let a: A = args(body)?;
+    let (start, end) = events::parse_range(&a.from, &a.to)?;
+    let cached = || {
+        user.store().cached_events(&a.from, &a.to).map(|c| (c.events.clone(), Some(c.fetched_at.clone()))).unwrap_or_default()
+    };
+    let Some(conn) = user.connection() else {
+        let (events, fetched_at) = cached();
+        return ok(EventsResult { events, fetched_at, error: None });
+    };
+    match sync::fetch_events(&conn.client, &conn.home, &conn.home, start, end).await {
+        Ok(events) => {
+            user.store().cache_events(&a.from, &a.to, events.clone());
+            schedule_save(user);
+            let fetched_at = user.store().cached_events(&a.from, &a.to).map(|c| c.fetched_at.clone());
+            ok(EventsResult { events, fetched_at, error: None })
+        }
+        Err(e) => {
+            let (events, fetched_at) = cached();
+            ok(EventsResult { events, fetched_at, error: Some(e.to_string()) })
+        }
+    }
 }
 
 fn online_err(e: Error) -> ApiError {
