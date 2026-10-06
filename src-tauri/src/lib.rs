@@ -2,11 +2,16 @@
 //! the background so every UI action completes instantly.
 
 mod autostart;
+#[cfg(desktop)]
 mod cli;
 mod desktop;
+#[cfg(mobile)]
+mod mobile;
 mod notify;
+#[cfg(desktop)]
 mod quick_add;
 mod secrets;
+#[cfg(desktop)]
 mod tray;
 
 use std::path::PathBuf;
@@ -24,7 +29,10 @@ use tasks_core::model::{NewTask, PatchOutcome, Task, TaskPatch, TaskStatus};
 use tasks_core::store::{write_atomic, Account, Snapshot, Store, TaskList};
 use tasks_core::sync::{self, SyncReport};
 use tasks_core::Error;
-use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
+#[cfg(desktop)]
+use tauri::WindowEvent;
+#[cfg(desktop)]
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 
@@ -63,8 +71,11 @@ pub(crate) struct AppState {
     creds_loaded: tokio::sync::watch::Sender<bool>,
     creds_retry: Mutex<Option<std::time::Instant>>,
     tray_created: bool,
+    #[cfg_attr(mobile, allow(dead_code))]
     pub(crate) quick_add_pending: AtomicBool,
+    #[cfg_attr(mobile, allow(dead_code))]
     pub(crate) quick_add_loaded: AtomicBool,
+    #[cfg_attr(mobile, allow(dead_code))]
     pub(crate) quick_add_creating: AtomicBool,
 }
 
@@ -96,6 +107,16 @@ fn err(e: Error) -> String {
 fn emit_snapshot(app: &AppHandle) {
     let snapshot = app.state::<AppState>().store().snapshot();
     let _ = app.emit("snapshot", snapshot);
+    reminders_changed(app);
+}
+
+/// Tasks or reminder settings changed. On Android the reminders the system
+/// shows are scheduled again; the desktop checks every few seconds anyway.
+fn reminders_changed(app: &AppHandle) {
+    #[cfg(mobile)]
+    mobile::schedule(app);
+    #[cfg(desktop)]
+    let _ = app;
 }
 
 fn set_status(app: &AppHandle, state: &'static str, message: Option<String>) {
@@ -171,6 +192,7 @@ fn schedule_push(app: &AppHandle) {
 fn after_local_change(app: &AppHandle) {
     schedule_save(app);
     schedule_push(app);
+    reminders_changed(app);
     let current = app.state::<AppState>().status.lock().unwrap_or_else(|p| p.into_inner()).clone();
     set_status(app, current.state, current.message);
 }
@@ -313,6 +335,7 @@ async fn sign_out(app: AppHandle, state: State<'_, AppState>) -> Result<Snapshot
     }
     set_status(&app, "signed-out", None);
     schedule_save(&app);
+    reminders_changed(&app);
     Ok(state.store().snapshot())
 }
 
@@ -535,6 +558,7 @@ fn updates_supported() -> bool {
 fn window_ready(app: AppHandle, window: tauri::Window, state: State<'_, AppState>) {
     match window.label() {
         "main" if !state.start_hidden => show_main_window(&app),
+        #[cfg(desktop)]
         quick_add::LABEL => quick_add::ready(&app),
         _ => {}
     }
@@ -542,7 +566,10 @@ fn window_ready(app: AppHandle, window: tauri::Window, state: State<'_, AppState
 
 #[tauri::command]
 fn hide_quick_add(app: AppHandle) {
+    #[cfg(desktop)]
     quick_add::hide(&app);
+    #[cfg(mobile)]
+    let _ = app;
 }
 
 // ---------------------------------------------------------------------------
@@ -565,9 +592,9 @@ struct SettingsView {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Platform {
-    /// `windows`, `linux`, `macos`
+    /// `windows`, `linux`, `macos`, `android`
     os: &'static str,
-    /// `windows`, `nix`, `appimage` or `system`
+    /// `windows`, `nix`, `appimage`, `android` or `system`
     install_kind: &'static str,
     /// Global shortcuts can't be registered (Wayland).
     wayland: bool,
@@ -607,6 +634,13 @@ fn tray_visible(state: &AppState) -> bool {
 }
 
 /// Registers the quick add shortcut; returns a message if that failed.
+#[cfg(mobile)]
+fn apply_shortcut(_app: &AppHandle, _shortcut: Option<&str>) -> Option<String> {
+    None
+}
+
+/// Registers the quick add shortcut; returns a message if that failed.
+#[cfg(desktop)]
 fn apply_shortcut(app: &AppHandle, shortcut: Option<&str>) -> Option<String> {
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
@@ -632,6 +666,7 @@ fn apply_shortcut(app: &AppHandle, shortcut: Option<&str>) -> Option<String> {
 }
 
 /// Whether the quick add shortcut is set up and working.
+#[cfg(desktop)]
 fn shortcut_active(state: &AppState) -> bool {
     state.settings().quick_add_shortcut.is_some() && state.shortcut_error.lock().unwrap_or_else(|p| p.into_inner()).is_none()
 }
@@ -653,12 +688,16 @@ fn update_settings(app: AppHandle, state: State<'_, AppState>, patch: SettingsPa
     if old.quick_add_shortcut != new.quick_add_shortcut {
         let error = apply_shortcut(&app, new.quick_add_shortcut.as_deref());
         *state.shortcut_error.lock().unwrap_or_else(|p| p.into_inner()) = error;
+        #[cfg(desktop)]
         if shortcut_active(&state) {
             quick_add::prepare(&app);
         }
     }
     if new.reminders && !old.reminders {
         state.alarms.restart();
+    }
+    if (new.reminders, new.default_reminder) != (old.reminders, old.default_reminder) {
+        reminders_changed(&app);
     }
     if let Some(launch) = patch.launch_at_login {
         autostart::set_enabled(&app, launch).map_err(|e| format!("Couldn't change the start-up setting: {e}"))?;
@@ -670,6 +709,9 @@ fn update_settings(app: AppHandle, state: State<'_, AppState>, patch: SettingsPa
 /// Settings (otherwise pressing the current one would open quick add).
 #[tauri::command]
 fn suspend_shortcut(app: AppHandle, state: State<'_, AppState>, suspend: bool) {
+    #[cfg(mobile)]
+    let _ = (app, state, suspend);
+    #[cfg(desktop)]
     if suspend {
         let _ = app.global_shortcut().unregister_all();
     } else {
@@ -691,10 +733,12 @@ fn open_link(app: AppHandle, url: String) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 // Reminders
 
+#[cfg(desktop)]
 fn app_id(app: &AppHandle) -> String {
     app.config().identifier.clone()
 }
 
+#[cfg(desktop)]
 fn toast_handler(app: &AppHandle) -> notify::Handler {
     let app = app.clone();
     Arc::new(move |action| handle_toast_action(&app, action))
@@ -723,7 +767,10 @@ fn handle_toast_action(app: &AppHandle, action: ToastAction) {
                 }
             }
         }
-        ToastAction::Snooze(uid, minutes) => state.alarms.snooze(&uid, minutes),
+        ToastAction::Snooze(uid, minutes) => {
+            state.alarms.snooze(&uid, minutes);
+            reminders_changed(app);
+        }
     }
 }
 
@@ -772,14 +819,9 @@ fn show_reminders(app: &AppHandle, due: Vec<DueReminder>) {
 fn show_toasts(app: &AppHandle, toasts: Vec<Toast>, done: impl FnOnce(&AppHandle, Vec<Toast>) + Send + 'static) {
     let handle = app.clone();
     let work = move || {
-        let id = app_id(&handle);
         let failed: Vec<Toast> = toasts
             .into_iter()
-            .filter(|t| {
-                notify::show(&id, t, toast_handler(&handle))
-                    .inspect_err(|e| log::info!("notification not shown: {e}"))
-                    .is_err()
-            })
+            .filter(|t| show_toast(&handle, t).inspect_err(|e| log::info!("notification not shown: {e}")).is_err())
             .collect();
         done(&handle, failed);
     };
@@ -792,16 +834,32 @@ fn show_toasts(app: &AppHandle, toasts: Vec<Toast>, done: impl FnOnce(&AppHandle
     }
 }
 
+fn show_toast(app: &AppHandle, toast: &Toast) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        notify::show(&app_id(app), toast, toast_handler(app))
+    }
+    #[cfg(mobile)]
+    {
+        mobile::show(app, toast)
+    }
+}
+
 fn check_reminders(app: &AppHandle) {
     let state = app.state::<AppState>();
     let settings = state.settings();
     if !settings.reminders {
         return;
     }
-    let due = {
+    let now = chrono::Utc::now();
+    #[cfg_attr(desktop, allow(unused_mut))]
+    let mut due = {
         let store = state.store();
-        state.alarms.collect(store.tasks(), store.lists(), settings.default_reminder, chrono::Utc::now())
+        state.alarms.collect(store.tasks(), store.lists(), settings.default_reminder, now)
     };
+    // The system showed the ones it was given (see mobile.rs).
+    #[cfg(mobile)]
+    due.retain(|d| !mobile::delivered_by_system(app, &d.uid, now));
     if !due.is_empty() {
         show_reminders(app, due);
     }
@@ -833,6 +891,7 @@ async fn test_notification(app: AppHandle) -> Result<(), String> {
     });
     match rx.await {
         Ok(true) => Ok(()),
+        _ if cfg!(mobile) => Err("Notifications are turned off for TasksNG. Allow them in Android's settings.".into()),
         _ => Err("No notification service answered. Is a notification daemon running?".into()),
     }
 }
@@ -845,6 +904,9 @@ fn quit_app(app: AppHandle) {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn show_main_window(app: &AppHandle) {
+    #[cfg(mobile)]
+    let _ = app;
+    #[cfg(desktop)]
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
@@ -854,6 +916,7 @@ pub(crate) fn show_main_window(app: &AppHandle) {
 
 /// Closing the main window hides it to the notification area (once with a
 /// hint), unless that is turned off.
+#[cfg(desktop)]
 fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
     let app = window.app_handle();
     match (window.label(), event) {
@@ -897,6 +960,7 @@ fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
 }
 
 /// Acts on flags given to this process or forwarded from a second launch.
+#[cfg(desktop)]
 fn handle_cli(app: &AppHandle, cli: &cli::Cli, first_launch: bool) {
     if cli.quit {
         app.exit(0);
@@ -984,6 +1048,7 @@ fn log_environment(state: &AppState) {
 pub fn run() {
     let context = tauri::generate_context!();
     // Before anything touches the display, D-Bus or $HOME.
+    #[cfg(desktop)]
     let cli = match cli::Cli::from_env() {
         Ok(cli) => cli,
         Err(cli::Early::Version) => {
@@ -995,16 +1060,19 @@ pub fn run() {
             return;
         }
     };
+    #[cfg(desktop)]
     let first_cli = cli.clone();
 
-    let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            // A second launch hands over its flags, e.g. `tasksng --quick-add`.
-            match cli::Cli::parse(&args) {
-                Ok(cli) => handle_cli(app, &cli, false),
-                Err(_) => show_main_window(app),
-            }
-        }))
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        // A second launch hands over its flags, e.g. `tasksng --quick-add`.
+        match cli::Cli::parse(&args) {
+            Ok(cli) => handle_cli(app, &cli, false),
+            Err(_) => show_main_window(app),
+        }
+    }));
+    let builder = builder
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
@@ -1015,12 +1083,13 @@ pub fn run() {
                 .max_file_size(2_000_000)
                 .build(),
         )
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init());
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(all(desktop, not(target_os = "linux")))]
     let builder = builder.plugin(tauri_plugin_autostart::Builder::new().args(["--hidden"]).build());
-    let app = builder
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -1040,8 +1109,12 @@ pub fn run() {
                 )
                 .build(),
         )
-        .on_window_event(on_window_event)
+        .on_window_event(on_window_event);
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_notification::init());
+    let app = builder
         .setup(move |app| {
+            #[cfg(desktop)]
             let cli = first_cli;
             let data_dir = app.path().app_data_dir()?;
             let store = Store::open(&data_dir.join("tasks-cache.json"));
@@ -1057,14 +1130,24 @@ pub fn run() {
             let shortcut = settings.quick_add_shortcut.clone();
             notify::register(&app.config().identifier, &data_dir);
             autostart::heal();
+            let handle = app.handle().clone();
 
             // tray-icon aborts the process if it can't load AppIndicator.
-            let handle = app.handle().clone();
+            #[cfg(desktop)]
             let tray_created = desktop::tray_library_available()
                 && tray::create(&handle).inspect_err(|e| log::error!("creating the tray icon failed: {e}")).is_ok();
+            #[cfg(desktop)]
             if !tray_created {
                 log::warn!("no tray icon: AppIndicator library not found");
             }
+            #[cfg(mobile)]
+            let tray_created = false;
+            #[cfg(desktop)]
+            let start_hidden = cli.hidden || cli.quick_add;
+            #[cfg(mobile)]
+            let start_hidden = false;
+            #[cfg(mobile)]
+            mobile::setup(&handle, &data_dir);
 
             app.manage(AppState {
                 alarms: Alarms::open(&data_dir.join("reminders.json")),
@@ -1079,7 +1162,7 @@ pub fn run() {
                 settings_path,
                 settings: Mutex::new(settings),
                 shortcut_error: Mutex::new(None),
-                start_hidden: cli.hidden || cli.quick_add,
+                start_hidden,
                 creds_loaded: tokio::sync::watch::channel(!signed_in).0,
                 // The start-up read counts as an attempt.
                 creds_retry: Mutex::new(Some(std::time::Instant::now())),
@@ -1094,9 +1177,10 @@ pub fn run() {
 
             let error = apply_shortcut(&handle, shortcut.as_deref());
             *app.state::<AppState>().shortcut_error.lock().unwrap_or_else(|p| p.into_inner()) = error;
+            #[cfg(desktop)]
             handle_cli(&handle, &cli, true);
 
-            #[cfg(unix)]
+            #[cfg(all(unix, desktop))]
             {
                 // Logging out or `systemctl stop` sends SIGTERM: save first.
                 let handle = handle.clone();
@@ -1119,21 +1203,26 @@ pub fn run() {
                     let h = handle.clone();
                     let _ = tauri::async_runtime::spawn_blocking(move || log_environment(&h.state::<AppState>())).await;
                 }
-                // The UI shows the window once it has painted; this is a
-                // safety net in case the web view fails to load.
-                tokio::time::sleep(Duration::from_secs(3)).await;
-                if !handle.state::<AppState>().start_hidden {
-                    if let Some(w) = handle.get_webview_window("main") {
-                        if !w.is_visible().unwrap_or(true) {
-                            let _ = w.show();
+                #[cfg(desktop)]
+                {
+                    // The UI shows the window once it has painted; this is a
+                    // safety net in case the web view fails to load.
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    if !handle.state::<AppState>().start_hidden {
+                        if let Some(w) = handle.get_webview_window("main") {
+                            if !w.is_visible().unwrap_or(true) {
+                                let _ = w.show();
+                            }
                         }
                     }
+                    // Load the quick add window in the background so the
+                    // shortcut opens it instantly.
+                    if shortcut_active(&handle.state::<AppState>()) {
+                        quick_add::prepare(&handle);
+                    }
                 }
-                // Load the quick add window in the background so the
-                // shortcut opens it instantly.
-                if shortcut_active(&handle.state::<AppState>()) {
-                    quick_add::prepare(&handle);
-                }
+                // Moves the window of reminders given to the system along.
+                reminders_changed(&handle);
                 loop {
                     check_reminders(&handle);
                     tokio::time::sleep(Duration::from_secs(10)).await;

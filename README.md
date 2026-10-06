@@ -5,17 +5,17 @@
 # TasksNG
 
 A keyboard-friendly task manager for your [Baikal](https://sabre.io/baikal/) server and other
-CalDAV servers built on sabre/dav. Runs on Windows 10 and 11 and on Linux, with a package for NixOS,
-and as a self-hosted web app in Docker.
+CalDAV servers built on sabre/dav. Runs on Windows 10 and 11, on Linux with a package for NixOS,
+on Android, and as a self-hosted web app in Docker.
 
 [![Build](https://github.com/sshahs/tasksng/actions/workflows/build.yml/badge.svg)](https://github.com/sshahs/tasksng/actions/workflows/build.yml)
 [![Latest release](https://img.shields.io/github/v/release/sshahs/tasksng?label=release)](https://github.com/sshahs/tasksng/releases/latest)
 [![Nix flake](https://img.shields.io/badge/nix-flake-5277C3?logo=nixos&logoColor=white)](#nixos-and-nix)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io-2496ED?logo=docker&logoColor=white)](#self-hosting-with-docker)
-![Windows | Linux | Web](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Web-informational)
+![Windows | Linux | Android | Web](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Android%20%7C%20Web-informational)
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://v2.tauri.app/)
 
-[Install](#install) · [Docker](#self-hosting-with-docker) · [Features](#features) ·
+[Install](#install) · [Android](#android) · [Docker](#self-hosting-with-docker) · [Features](#features) ·
 [Shortcuts](#keyboard-shortcuts) · [Linux notes](#running-on-linux) · [How it works](#how-it-works) ·
 [Development](#development)
 
@@ -53,6 +53,32 @@ Download the installer from the [latest release](https://github.com/sshahs/tasks
 
 Builds of every commit are on the [Actions](https://github.com/sshahs/tasksng/actions) tab as the
 `TasksNG-windows-x64` artifact.
+
+### Android
+
+Download `TasksNG_x.y.z_android.apk` from the
+[latest release](https://github.com/sshahs/tasksng/releases/latest) and open it on your phone. It
+needs Android 8 or later. The first time, Android asks you to allow installing apps from your
+browser or file manager. To update, install the APK of a newer release over the old one; your
+tasks and sign-in stay.
+
+It is the same app with a layout for phones. The lists slide in from the left (☰), tapping a task
+opens its details, and long-pressing a task opens its menu (complete, due date, priority, move to
+another list …). The Back gesture closes whatever is open. Light and dark follow your phone or
+the choice in Settings.
+
+Reminders are handed to Android's alarm service, so they appear on time with *Snooze 10 min* and
+*Done* buttons even when TasksNG isn't running. Android 13 and later ask once whether TasksNG may
+show notifications. A reminder added on another device is scheduled the next time the phone
+syncs, which happens whenever you open TasksNG.
+
+Your password is kept in the app's private storage. TasksNG trusts the certificate authorities
+that come with Android, not ones you installed yourself, so for a self-signed certificate turn on
+*Accept invalid TLS certificates* under *Advanced* when signing in.
+
+Builds of every commit are on the [Actions](https://github.com/sshahs/tasksng/actions) tab as the
+`TasksNG-android` artifact. They are signed with a throwaway key, so uninstall one before
+installing a release.
 
 ### NixOS and Nix
 
@@ -265,8 +291,8 @@ here and the other way round. Tasks with a due time and no reminder of their own
 one at the due time. You can change that offset or turn it off in Settings. It stays on this
 computer and isn't written to the server.
 
-TasksNG has to run for reminders to appear, so closing the window keeps it in the notification
-area by default. Right-click the icon to quit. Settings can make closing quit the app instead,
+On the desktop, TasksNG has to run for reminders to appear (on [Android](#android) it doesn't), so
+closing the window keeps it in the notification area by default. Right-click the icon to quit. Settings can make closing quit the app instead,
 and can start TasksNG when you sign in. It then starts quietly in the background.
 
 Reminders missed while TasksNG wasn't running appear when it starts, as long as they are less
@@ -434,6 +460,9 @@ npm run app:build    # build installers (target/release/bundle)
 handy when you only work on the UI. Add `?setup` to the URL to see the sign-in screen; the demo
 password is `demo`. The screenshots in this README come from that demo.
 
+Below 768 pixels wide the UI switches to the phone layout of the Android app, so `npm run dev`
+in a narrow window (or the browser's device toolbar) shows that as well.
+
 To work on the web version, run the server and point the dev UI at it:
 
 ```sh
@@ -441,6 +470,32 @@ TASKSNG_LISTEN=127.0.0.1:8080 TASKSNG_DATA_DIR=./.web-data TASKSNG_STATIC_DIR=./
   TASKSNG_CALDAV_URL=http://127.0.0.1:8800 cargo run -p tasks-server
 VITE_BACKEND=server npm run dev   # proxies /api to port 8080
 ```
+
+### Android
+
+The Android app is built from the same code with
+[Tauri's mobile support](https://v2.tauri.app/develop/#developing-your-mobile-application). You
+need the Android SDK and NDK (Android Studio installs both), JDK 17 or later, and the Rust
+targets:
+
+```sh
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
+export ANDROID_HOME=~/Android/Sdk NDK_HOME=~/Android/Sdk/ndk/<version>
+npm run tauri android dev                # on a connected phone or an emulator, with hot reload
+npm run tauri android build -- --apk     # APK in src-tauri/gen/android/app/build/outputs/apk/
+```
+
+`src-tauri/gen/android` is the Android Studio project. TasksNG's own parts in it are
+`MainActivity.kt` (edge-to-edge layout, system bar colours, reminder buttons that start the app),
+the exact-alarm permissions in the manifest, the notification icon, and the signing setup in
+`app/build.gradle.kts`. The launcher icons come from `assets/android/`:
+`npx tauri icon assets/android/icon.json -o /tmp/icons`, then copy `/tmp/icons/android/*` into
+`app/src/main/res/`.
+
+On the Rust side, `src-tauri/src/mobile.rs` schedules reminders with the notification plugin,
+and the desktop-only parts (tray, global shortcut, updater, start at login) are left out with
+`#[cfg(desktop)]`. Android has no system OpenSSL, so there the sync client uses rustls with
+Android's certificate authorities (`tasks-core`'s `rustls` feature).
 
 ### Tests
 
@@ -461,7 +516,8 @@ TASKSNG_TEST_URL=http://127.0.0.1:8800 cargo test -p tasks-server   # the web AP
 ```
 
 CI (`.github/workflows/build.yml`) runs all of these on every push. It also runs clippy on the
-Linux app and the server, builds the Windows installers on `windows-latest`, builds the Nix
+Linux app, the Android app and the server, builds the Windows installers on `windows-latest` and
+the Android APK, builds the Nix
 package and checks the NixOS module, and builds the Docker image for amd64 and arm64, starts it
 and publishes it to `ghcr.io/sshahs/tasksng` (from `main` and for releases).
 
@@ -483,6 +539,17 @@ Before the first release, add the updater signing key as a repository secret nam
 password, add `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as well. Keep a backup of the key, because
 installed copies only accept updates signed with it.
 
+Android releases are signed with a key of their own. Android only installs an update that is
+signed with the same key as the installed copy, so create it once and keep a backup:
+
+```sh
+keytool -genkeypair -keystore tasksng-android.jks -keyalg RSA -keysize 4096 -validity 10000 -alias tasksng
+base64 -w0 tasksng-android.jks
+```
+
+Add the base64 text as the secret `ANDROID_KEYSTORE`, the password as
+`ANDROID_KEYSTORE_PASSWORD` and the alias (`tasksng`) as `ANDROID_KEY_ALIAS`.
+
 For each release, first set the new version in `src-tauri/tauri.conf.json`, `package.json`
 (`npm version X.Y.Z --no-git-tag-version`) and the workspace `Cargo.toml`, and commit it. Write
 the release notes in `docs/release-notes/X.Y.Z.md` in the same commit; the release uses them, and
@@ -498,8 +565,8 @@ git tag v0.3.0
 git push origin v0.3.0
 ```
 
-CI builds the installers with that version, signs them, generates `latest.json` with
-`scripts/updater-manifest.mjs`, and publishes everything as a GitHub release. Installed copies
+CI builds the installers and the Android APK with that version, signs them, generates
+`latest.json` with `scripts/updater-manifest.mjs`, and publishes everything as a GitHub release. Installed copies
 pick it up on their next check. Versions must be plain `X.Y.Z`, because the MSI format doesn't
 allow pre-release suffixes.
 
@@ -512,7 +579,8 @@ they need one update by hand.
 
 ```
 crates/tasks-core/      platform independent sync engine (Rust)
-src-tauri/              desktop shell: commands, background sync, credential storage, tray, notifications
+src-tauri/              app shell: commands, background sync, credential storage, tray, notifications
+  gen/android/          Android Studio project (MainActivity, manifest, icons, signing)
 crates/tasks-server/    web version: HTTP API, sessions, live updates (Server-Sent Events)
 src/                    React UI
   components/ui/        shadcn/ui components
@@ -527,9 +595,9 @@ docs/screenshots/       images used in this README
 
 ### Where data lives
 
-| | Windows | Linux | Docker |
-| --- | --- | --- | --- |
-| Tasks and pending changes (`tasks-cache.json`), `settings.json`, `reminders.json` | `%APPDATA%\app.tasksng.desktop\` | `~/.local/share/app.tasksng.desktop/` | `/data/users/<account>/` |
-| Logs | `%LOCALAPPDATA%\app.tasksng.desktop\logs\` | `~/.local/share/app.tasksng.desktop/logs/` | `docker logs` |
+| | Windows | Linux | Android | Docker |
+| --- | --- | --- | --- | --- |
+| Tasks and pending changes (`tasks-cache.json`), `settings.json`, `reminders.json` | `%APPDATA%\app.tasksng.desktop\` | `~/.local/share/app.tasksng.desktop/` | the private storage of `app.tasksng.android` | `/data/users/<account>/` |
+| Logs | `%LOCALAPPDATA%\app.tasksng.desktop\logs\` | `~/.local/share/app.tasksng.desktop/logs/` | `adb logcat` | `docker logs` |
 
 Saved searches, sort orders and view preferences live in the app's web storage.

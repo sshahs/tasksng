@@ -4,7 +4,9 @@
 /// How this copy was installed, which decides how it gets updated.
 pub fn install_kind() -> &'static str {
     let exe = std::env::current_exe().unwrap_or_default();
-    if exe.starts_with("/nix/store") {
+    if cfg!(target_os = "android") {
+        "android"
+    } else if exe.starts_with("/nix/store") {
         "nix"
     } else if std::env::var_os("APPIMAGE").is_some() {
         "appimage"
@@ -36,7 +38,7 @@ pub fn tray_library_available() -> bool {
         .any(|name| unsafe { libloading::Library::new(name) }.is_ok())
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(desktop, not(target_os = "linux")))]
 pub fn tray_library_available() -> bool {
     true
 }

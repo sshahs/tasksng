@@ -145,9 +145,9 @@ export interface SettingsView extends Settings {
 
 /** What the system supports, for the right wording in Settings. */
 export interface Platform {
-  os: "windows" | "linux" | "macos" | (string & {});
+  os: "windows" | "linux" | "macos" | "android" | "web" | (string & {});
   /** How TasksNG was installed, which decides how it is updated. */
-  installKind: "windows" | "nix" | "appimage" | "system";
+  installKind: "windows" | "nix" | "appimage" | "system" | "android" | "server";
   /** Global shortcuts can't be registered (Wayland): bind `tasksng --quick-add` instead. */
   wayland: boolean;
   /** A tray icon is visible somewhere. */

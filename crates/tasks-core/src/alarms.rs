@@ -40,6 +40,14 @@ pub struct DueReminder {
     pub body: String,
 }
 
+/// A reminder that goes off later. Android hands these to the system so
+/// they appear while TasksNG isn't running.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Upcoming {
+    pub at: DateTime<Utc>,
+    pub reminder: DueReminder,
+}
+
 pub struct Alarms {
     path: PathBuf,
     state: Mutex<AlarmState>,
@@ -91,6 +99,45 @@ impl Alarms {
             (due, changed)
         })
     }
+}
+
+impl Alarms {
+    /// Reminders (and snoozes) that go off after `now` and up to `until`,
+    /// earliest first. Records nothing.
+    pub fn upcoming<'a>(
+        &self,
+        tasks: impl Iterator<Item = &'a Task>,
+        lists: &[TaskList],
+        default_reminder: Option<i64>,
+        now: DateTime<Utc>,
+        until: DateTime<Utc>,
+    ) -> Vec<Upcoming> {
+        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        upcoming(tasks, lists, &state, default_reminder, now, until)
+    }
+}
+
+pub fn upcoming<'a>(
+    tasks: impl Iterator<Item = &'a Task>,
+    lists: &[TaskList],
+    state: &AlarmState,
+    default_reminder: Option<i64>,
+    now: DateTime<Utc>,
+    until: DateTime<Utc>,
+) -> Vec<Upcoming> {
+    let mut out = Vec::new();
+    for t in tasks.filter(|t| !t.completed) {
+        let snooze = state.snoozed.get(&t.uid).copied();
+        let mut times: Vec<DateTime<Utc>> = fire_times(t, default_reminder).into_iter().chain(snooze).collect();
+        times.sort();
+        times.dedup();
+        for at in times.into_iter().filter(|at| *at > now && *at <= until) {
+            // Worded for the moment it appears ("Due today at 14:30").
+            out.push(Upcoming { at, reminder: describe(t, lists, at) });
+        }
+    }
+    out.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.reminder.uid.cmp(&b.reminder.uid)));
+    out
 }
 
 fn timed_due(task: &Task) -> Option<DateTime<Utc>> {
@@ -269,6 +316,33 @@ mod tests {
         assert!(collect(std::iter::once(&t), &[], &mut s, Some(0), at("2026-10-04T10:05:00Z")).is_empty());
         assert_eq!(collect(std::iter::once(&t), &[], &mut s, Some(0), at("2026-10-04T10:10:20Z")).len(), 1);
         assert!(s.snoozed.is_empty());
+    }
+
+    #[test]
+    fn upcoming_lists_later_reminders_and_snoozes() {
+        let mut done = task("done", Some("2026-10-04T11:00:00Z"), vec![]);
+        done.completed = true;
+        let tasks = [
+            task("past", Some("2026-10-04T09:00:00Z"), vec![]),
+            task("b", Some("2026-10-04T12:00:00Z"), vec![]),
+            task("a", Some("2026-10-04T10:30:00Z"), vec![Reminder::Relative { offset: -1800, related: Related::Due }]),
+            task("far", Some("2026-10-20T10:00:00Z"), vec![]),
+            done,
+        ];
+        let mut s = AlarmState::default();
+        s.snoozed.insert("past".into(), at("2026-10-04T10:15:00Z"));
+        let now = at("2026-10-04T09:30:00Z");
+        let up = upcoming(tasks.iter(), &[], &s, Some(0), now, now + Duration::days(7));
+        let got: Vec<(&str, DateTime<Utc>)> = up.iter().map(|u| (u.reminder.uid.as_str(), u.at)).collect();
+        assert_eq!(
+            got,
+            vec![
+                ("a", at("2026-10-04T10:00:00Z")),
+                ("past", at("2026-10-04T10:15:00Z")),
+                ("b", at("2026-10-04T12:00:00Z")),
+            ]
+        );
+        assert!(up[0].reminder.body.starts_with("Due today"), "{}", up[0].reminder.body);
     }
 
     #[test]

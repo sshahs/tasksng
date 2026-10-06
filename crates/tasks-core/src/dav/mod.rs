@@ -118,6 +118,59 @@ fn net_err(e: reqwest::Error) -> Error {
     }
 }
 
+/// Certificate authorities for the rustls build (Android), which has no
+/// platform verifier to fall back on.
+#[cfg(all(feature = "rustls", not(feature = "native-tls")))]
+mod rustls_roots {
+    use reqwest::Certificate;
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::CertificateDer;
+    use rustls::RootCertStore;
+
+    /// Android keeps its trusted CAs as one PEM file each: in the updatable
+    /// Conscrypt module from Android 14, in the system image before.
+    const SYSTEM_DIRS: [&str; 2] = ["/apex/com.android.conscrypt/cacerts", "/system/etc/security/cacerts"];
+
+    pub fn load() -> Vec<Certificate> {
+        for dir in SYSTEM_DIRS {
+            let certs = from_dir(dir);
+            if !certs.is_empty() {
+                log::debug!("{} trusted certificates from {dir}", certs.len());
+                return certs;
+            }
+        }
+        // Mozilla's list, for systems that don't expose theirs.
+        log::info!("no system certificate store found, using the built-in list");
+        usable(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned())
+    }
+
+    fn from_dir(dir: &str) -> Vec<Certificate> {
+        let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+        let ders = entries
+            .flatten()
+            .filter_map(|e| std::fs::read(e.path()).ok())
+            .filter_map(|pem| CertificateDer::from_pem_slice(&pem).ok());
+        usable(ders)
+    }
+
+    /// Only certificates rustls accepts as roots: a single one it rejects
+    /// would make building the HTTP client fail.
+    fn usable(ders: impl Iterator<Item = CertificateDer<'static>>) -> Vec<Certificate> {
+        let mut check = RootCertStore::empty();
+        ders.filter(|der| check.add(der.clone()).is_ok())
+            .filter_map(|der| Certificate::from_der(&der).ok())
+            .collect()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn falls_back_to_the_built_in_list() {
+            assert!(super::load().len() > 100);
+        }
+    }
+}
+
 /// Accepts `dav.example.com`, `https://example.com/baikal/html/` … and turns
 /// it into a URL with a trailing slash.
 pub fn normalize_url(input: &str) -> Result<Url, Error> {
@@ -157,7 +210,14 @@ fn href_path(href: &str) -> String {
 
 impl DavClient {
     pub fn new(base: &Url, creds: Credentials, accept_invalid_certs: bool) -> Result<Self, Error> {
-        let http = reqwest::Client::builder()
+        let builder = reqwest::Client::builder();
+        #[cfg(all(feature = "rustls", not(feature = "native-tls")))]
+        let builder = {
+            // Fails harmlessly when a provider is already installed.
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            builder.tls_certs_only(rustls_roots::load())
+        };
+        let http = builder
             .user_agent(USER_AGENT)
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))

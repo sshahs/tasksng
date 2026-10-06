@@ -5,7 +5,7 @@
 //! `current_exe()`, which for a Nix install is the unwrapped binary inside a
 //! store path that disappears after the next update and garbage collection.
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(desktop, not(target_os = "linux")))]
 mod imp {
     use tauri::AppHandle;
     use tauri_plugin_autostart::ManagerExt;
@@ -142,6 +142,30 @@ mod imp {
             }
         }
     }
+}
+
+/// Android starts apps itself; reminders are scheduled with the system.
+#[cfg(mobile)]
+mod imp {
+    use tauri::AppHandle;
+
+    pub fn is_enabled(_app: &AppHandle) -> bool {
+        false
+    }
+
+    pub fn set_enabled(_app: &AppHandle, on: bool) -> Result<(), String> {
+        if on {
+            Err("not available on this system".into())
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn unavailable_reason() -> Option<String> {
+        Some("Not needed on Android: reminders appear without TasksNG running.".into())
+    }
+
+    pub fn heal() {}
 }
 
 pub use imp::{heal, is_enabled, set_enabled, unavailable_reason};

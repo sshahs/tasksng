@@ -111,7 +111,7 @@ function NavItem({
         dropOn(drop, id);
       }}
       className={cn(
-        "flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-left text-sm transition-colors [&_svg]:size-4 [&_svg]:shrink-0",
+        "flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-left text-sm transition-colors max-md:h-10 [&_svg]:size-4 [&_svg]:shrink-0",
         "hover:bg-sidebar-accent text-sidebar-foreground/85",
         active && "bg-sidebar-accent text-sidebar-accent-foreground font-medium",
         over && "bg-primary/15 ring-primary/60 ring-2 ring-inset",
@@ -148,7 +148,22 @@ function SectionHeader({
   );
 }
 
-export function Sidebar() {
+/** The sidebar sliding in over the tasks (phone layout). */
+export function SidebarDrawer() {
+  const open = useStore((s) => s.drawerOpen);
+  if (!open) return null;
+  const close = () => useStore.getState().set({ drawerOpen: false });
+  return (
+    <>
+      <div aria-hidden className="animate-in fade-in-0 fixed inset-0 z-40 bg-black/40" onClick={close} />
+      <div className="animate-in slide-in-from-left fixed inset-y-0 left-0 z-40 flex w-[min(20rem,85vw)] shadow-xl duration-200">
+        <Sidebar drawer />
+      </div>
+    </>
+  );
+}
+
+export function Sidebar({ drawer = false }: { drawer?: boolean }) {
   const view = useStore((s) => s.view);
   const lists = useStore((s) => s.lists);
   const tasks = useStore((s) => s.tasks);
@@ -174,7 +189,10 @@ export function Sidebar() {
   const setView = (v: ViewId) => useStore.getState().setView(v);
 
   return (
-    <nav className="bg-sidebar border-sidebar-border flex h-full w-60 shrink-0 flex-col border-r" aria-label="Lists">
+    <nav
+      className={cn("bg-sidebar border-sidebar-border flex h-full shrink-0 flex-col border-r", drawer ? "w-full" : "w-60")}
+      aria-label="Lists"
+    >
       <div className="flex h-12 items-center gap-2 px-4">
         <img src="/icon.svg" alt="" className="size-5" />
         <span className="font-semibold tracking-tight">TasksNG</span>
@@ -185,13 +203,13 @@ export function Sidebar() {
               variant="ghost"
               size="icon-xs"
               className="text-muted-foreground"
-              onClick={() => useStore.getState().set({ sidebarOpen: false })}
-              aria-label="Hide sidebar"
+              onClick={() => useStore.getState().set(drawer ? { drawerOpen: false } : { sidebarOpen: false })}
+              aria-label={drawer ? "Close" : "Hide sidebar"}
             >
               <PanelLeftIcon className="size-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Hide sidebar (Ctrl+B)</TooltipContent>
+          <TooltipContent>{drawer ? "Close" : "Hide sidebar (Ctrl+B)"}</TooltipContent>
         </Tooltip>
       </div>
 

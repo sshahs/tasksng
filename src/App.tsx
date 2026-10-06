@@ -6,14 +6,16 @@ import { ListDialog } from "@/components/list-dialog";
 import { SearchDialog, TagDialog } from "@/components/search-dialog";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { SetupScreen } from "@/components/setup-screen";
-import { Sidebar } from "@/components/sidebar";
+import { Sidebar, SidebarDrawer } from "@/components/sidebar";
 import { TaskDetail } from "@/components/task-detail";
 import { TaskPane } from "@/components/task-pane";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useHotkeys } from "@/hooks/use-hotkeys";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useTheme } from "@/hooks/use-theme";
+import { takeLaunchAction, useAndroid } from "@/lib/android";
 import { api, windowReady } from "@/lib/api";
 import { getPref } from "@/lib/prefs";
 import { SMART_VIEWS, useStore, type ViewId } from "@/lib/store";
@@ -80,6 +82,7 @@ export default function App() {
   const ready = useStore((s) => s.ready);
   const account = useStore((s) => s.account);
   const sidebarOpen = useStore((s) => s.sidebarOpen);
+  const mobile = useIsMobile();
   const authRequired = useStore((s) => s.status.state === "auth-required");
   const [fatal, setFatal] = useState<string | null>(null);
 
@@ -90,6 +93,7 @@ export default function App() {
       .then(() => {
         // Show the window only once real content has painted (no white flash).
         windowReady();
+        takeLaunchAction();
         if (useStore.getState().account) void useStore.getState().sync();
       })
       .catch((e) => {
@@ -100,6 +104,7 @@ export default function App() {
 
   useAutoSync();
   useAutoUpdate();
+  useAndroid();
 
   // Keep the browser engine's own shortcuts (reload, print, find) out of the way.
   useEffect(() => {
@@ -141,7 +146,7 @@ export default function App() {
         <SetupScreen />
       ) : (
         <div className="flex h-full">
-          {sidebarOpen && <Sidebar />}
+          {mobile ? <SidebarDrawer /> : sidebarOpen && <Sidebar />}
           <main className="relative flex min-w-0 flex-1 flex-col">
             {authRequired && (
               <div className="bg-destructive/10 text-destructive flex items-center gap-3 border-b px-4 py-2 text-sm">

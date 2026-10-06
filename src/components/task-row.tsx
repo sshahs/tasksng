@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { Checkbox } from "@/components/ui/checkbox";
+import { isMobileLayout, isTouch } from "@/hooks/use-mobile";
 import { formatDue, isDueToday, isOverdue, parseDue } from "@/lib/dates";
 import { DRAG_TYPE, useDrag, type DropPos } from "@/lib/dnd";
 import { startsLater } from "@/lib/search";
@@ -23,6 +24,11 @@ import { PriorityFlag, priorityBorder, priorityFill, priorityLevel } from "./pri
 /** Clicking row controls must neither select the row nor steal keyboard focus. */
 function keepFocus(e: React.MouseEvent) {
   e.preventDefault();
+  e.stopPropagation();
+}
+
+/** Nor open the task's details on a phone. */
+function stop(e: React.MouseEvent) {
   e.stopPropagation();
 }
 
@@ -89,8 +95,10 @@ export const TaskRow = memo(function TaskRow({
       role="option"
       aria-selected={selected}
       data-task-id={task.id}
-      draggable={!readOnly}
+      // Long-pressing a row opens its menu on touch screens.
+      draggable={!readOnly && !isTouch()}
       onMouseDown={select}
+      onClick={() => isMobileLayout() && useStore.getState().openDetail(task.id)}
       onContextMenu={select}
       onDoubleClick={() => useStore.setState((s) => ({ focusTitle: s.focusTitle + 1 }))}
       onDragStart={(e) => {
@@ -117,7 +125,7 @@ export const TaskRow = memo(function TaskRow({
         if (over?.kind === "row" && over.id === task.id) useDrag.setState({ over: null });
       }}
       className={cn(
-        "group relative flex cursor-default items-start gap-2 rounded-md px-2 py-[7px] text-sm transition-colors",
+        "group relative flex cursor-default items-start gap-2 rounded-md px-2 py-[7px] text-sm transition-colors max-md:py-2.5",
         "hover:bg-accent/60",
         selected && "bg-accent hover:bg-accent",
         dragging && "opacity-40",
@@ -141,9 +149,12 @@ export const TaskRow = memo(function TaskRow({
         tabIndex={-1}
         aria-label={collapsed ? "Expand subtasks" : "Collapse subtasks"}
         onMouseDown={keepFocus}
-        onClick={() => useStore.getState().toggleCollapsed(task.uid)}
+        onClick={(e) => {
+          stop(e);
+          useStore.getState().toggleCollapsed(task.uid);
+        }}
         className={cn(
-          "text-muted-foreground hover:text-foreground -ml-1 mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-sm",
+          "text-muted-foreground hover:text-foreground relative -ml-1 mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-sm after:absolute after:-inset-2",
           !(hasVisibleChildren || (collapsed && childCount > 0)) && "invisible",
         )}
       >
@@ -155,10 +166,11 @@ export const TaskRow = memo(function TaskRow({
           disabled={readOnly}
           tabIndex={-1}
           onMouseDown={keepFocus}
+          onClick={stop}
           onCheckedChange={() => void useStore.getState().toggleComplete(task.id)}
           aria-label={task.completed ? "Mark as not done" : "Mark as done"}
           className={cn(
-            "size-[18px] rounded-full border-[1.5px] shadow-none transition-colors",
+            "relative size-[18px] rounded-full border-[1.5px] shadow-none transition-colors after:absolute after:-inset-2.5",
             priorityBorder[level],
             !task.completed && "hover:bg-accent",
             cancelled && "data-[state=checked]:bg-muted-foreground data-[state=checked]:border-muted-foreground [&_svg]:hidden",

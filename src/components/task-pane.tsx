@@ -16,6 +16,7 @@ import {
   FlagIcon,
   HashIcon,
   HourglassIcon,
+  MenuIcon,
   MoreHorizontalIcon,
   PanelLeftIcon,
   PencilIcon,
@@ -62,6 +63,7 @@ import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useDayKey } from "@/hooks/use-day-key";
 import { useHotkeys } from "@/hooks/use-hotkeys";
+import { isTouch, useIsMobile } from "@/hooks/use-mobile";
 import { dateOnly } from "@/lib/dates";
 import { planDrop, planKeyboardMove, useDrag, type DropPlan } from "@/lib/dnd";
 import { FILTER_HELP } from "@/lib/search";
@@ -103,6 +105,10 @@ export function TaskPane() {
   const listRef = useRef<HTMLDivElement>(null);
   const [confirmDeleteList, setConfirmDeleteList] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
+  // Phone layout: the search box opens in its own row.
+  const mobile = useIsMobile();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const showSearchRow = mobile && (searchOpen || !!search);
 
   const listId = listIdOf(view);
   const tag = tagOf(view);
@@ -122,7 +128,9 @@ export function TaskPane() {
   const selected = selectedId ? tasks[selectedId] : undefined;
 
   useEffect(() => {
-    if (focusSearch) searchRef.current?.focus();
+    if (!focusSearch) return;
+    setSearchOpen(true);
+    requestAnimationFrame(() => searchRef.current?.focus());
   }, [focusSearch]);
 
   // Keep the selected row visible during keyboard navigation.
@@ -205,6 +213,65 @@ export function TaskPane() {
     if (plan) applyPlan(view, plan);
   };
 
+  const searchBox = (
+    <div className="relative">
+      <SearchIcon className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
+      <input
+        ref={searchRef}
+        value={search}
+        onChange={(e) => useStore.getState().set({ search: e.target.value })}
+        onFocus={() => setSearchFocused(true)}
+        onBlur={() => setSearchFocused(false)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            useStore.getState().set({ search: "" });
+            e.currentTarget.blur();
+          } else if (e.key === "ArrowDown") {
+            e.preventDefault();
+            e.currentTarget.blur();
+            move(1);
+          }
+        }}
+        placeholder="Search"
+        aria-label="Search or filter"
+        className={cn(
+          "border-input dark:bg-input/30 focus-visible:border-ring focus-visible:ring-ring/50 placeholder:text-muted-foreground rounded-md border bg-transparent pr-7 pl-8 text-sm outline-none focus-visible:ring-[3px]",
+          mobile ? "h-9 w-full" : "h-8 w-44 transition-[width] focus-visible:w-64",
+        )}
+      />
+      {search && (
+        <button
+          className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2"
+          onClick={() => {
+            useStore.getState().set({ search: "" });
+            setSearchOpen(false);
+          }}
+          aria-label="Clear search"
+        >
+          <XIcon className="size-3.5" />
+        </button>
+      )}
+      {searchFocused && !search && (
+        <div
+          className={cn(
+            "bg-popover text-popover-foreground absolute right-0 z-30 rounded-md border p-3 text-xs shadow-md",
+            mobile ? "top-11 w-full" : "top-10 w-72",
+          )}
+        >
+          <p className="text-muted-foreground mb-2">Search words, or filter:</p>
+          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+            {FILTER_HELP.map(([k, v]) => (
+              <div key={k} className="contents">
+                <code className="font-mono">{k}</code>
+                <span className="text-muted-foreground">{v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   const smart = SMART_VIEWS.find((v) => v.id === view);
   const title = list?.name ?? (tag !== null ? `#${tag}` : null) ?? saved?.name ?? smart?.label ?? "Tasks";
   const subtitle = view === "today" ? format(new Date(), "EEEE, d MMMM") : saved ? saved.query : null;
@@ -212,20 +279,32 @@ export function TaskPane() {
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
-      <header className="flex items-start gap-2 px-6 pt-5 pb-3">
-        {!sidebarOpen && (
+      <header className="flex items-start gap-2 px-6 pt-5 pb-3 max-md:px-4 max-md:pt-3">
+        {mobile ? (
           <Button
             variant="ghost"
-            size="icon-sm"
-            className="text-muted-foreground -ml-2 mt-0.5"
-            onClick={() => useStore.getState().set({ sidebarOpen: true })}
-            aria-label="Show sidebar"
+            size="icon"
+            className="text-muted-foreground -ml-2"
+            onClick={() => useStore.getState().set({ drawerOpen: true })}
+            aria-label="Lists"
           >
-            <PanelLeftIcon />
+            <MenuIcon />
           </Button>
+        ) : (
+          !sidebarOpen && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground -ml-2 mt-0.5"
+              onClick={() => useStore.getState().set({ sidebarOpen: true })}
+              aria-label="Show sidebar"
+            >
+              <PanelLeftIcon />
+            </Button>
+          )
         )}
         <div className="min-w-0 flex-1">
-          <h1 className="flex items-center gap-2 truncate text-2xl font-semibold tracking-tight">
+          <h1 className="flex items-center gap-2 truncate text-2xl font-semibold tracking-tight max-md:text-xl">
             {list && <span className="size-3 shrink-0 rounded-full" style={{ background: list.color ?? "var(--muted-foreground)" }} />}
             {saved && <SearchIcon className="text-muted-foreground size-5 shrink-0" />}
             <span className="truncate">{title}</span>
@@ -237,51 +316,27 @@ export function TaskPane() {
           </p>
         </div>
         <div className="flex items-center gap-1">
-          <div className="relative">
-            <SearchIcon className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
-            <input
-              ref={searchRef}
-              value={search}
-              onChange={(e) => useStore.getState().set({ search: e.target.value })}
-              onFocus={() => setSearchFocused(true)}
-              onBlur={() => setSearchFocused(false)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
+          {mobile ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className={cn("text-muted-foreground", showSearchRow && "text-foreground")}
+              onClick={() => {
+                if (showSearchRow) {
+                  setSearchOpen(false);
                   useStore.getState().set({ search: "" });
-                  e.currentTarget.blur();
-                } else if (e.key === "ArrowDown") {
-                  e.preventDefault();
-                  e.currentTarget.blur();
-                  move(1);
+                } else {
+                  useStore.setState((x) => ({ focusSearch: x.focusSearch + 1 }));
                 }
               }}
-              placeholder="Search"
-              aria-label="Search or filter"
-              className="border-input dark:bg-input/30 focus-visible:border-ring focus-visible:ring-ring/50 placeholder:text-muted-foreground h-8 w-44 rounded-md border bg-transparent pr-7 pl-8 text-sm outline-none transition-[width] focus-visible:w-64 focus-visible:ring-[3px]"
-            />
-            {search && (
-              <button
-                className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2"
-                onClick={() => useStore.getState().set({ search: "" })}
-                aria-label="Clear search"
-              >
-                <XIcon className="size-3.5" />
-              </button>
-            )}
-            {searchFocused && !search && (
-              <div className="bg-popover text-popover-foreground absolute top-10 right-0 z-30 w-72 rounded-md border p-3 text-xs shadow-md">
-                <p className="text-muted-foreground mb-2">Search words, or filter:</p>
-                <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-                  {FILTER_HELP.map(([k, v]) => (
-                    <div key={k} className="contents">
-                      <code className="font-mono">{k}</code>
-                      <span className="text-muted-foreground">{v}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+              aria-pressed={showSearchRow}
+              aria-label="Search"
+            >
+              <SearchIcon />
+            </Button>
+          ) : (
+            searchBox
+          )}
           {search.trim() && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -377,6 +432,8 @@ export function TaskPane() {
         </div>
       </header>
 
+      {showSearchRow && <div className="px-4 pb-2">{searchBox}</div>}
+
       {!list?.readOnly && <QuickAdd />}
 
       <ContextMenu>
@@ -385,7 +442,7 @@ export function TaskPane() {
             ref={listRef}
             role="listbox"
             aria-label={title}
-            className="min-h-0 flex-1 overflow-y-auto px-4 pb-8"
+            className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 max-md:px-2"
             onDragOver={(e) => {
               // Dropping below the last task puts it at the end of the list.
               const { id, over } = useDrag.getState();
@@ -617,7 +674,7 @@ function EmptyState({ view, searching }: { view: ViewId; searching: boolean }) {
             ? { title: "No open tasks with this tag", body: "Add one above and it gets the tag." }
             : searchIdOf(view)
               ? { title: "Nothing matches this search", body: "Tasks show up here as soon as they match." }
-              : { title: "No tasks yet", body: "Add one above — press N anywhere to start typing." };
+              : { title: "No tasks yet", body: isTouch() ? "Add one above." : "Add one above — press N anywhere to start typing." };
   return (
     <div className="text-muted-foreground flex flex-col items-center justify-center gap-2 py-24 text-center">
       <div className="bg-muted mb-2 flex size-14 items-center justify-center rounded-full">
