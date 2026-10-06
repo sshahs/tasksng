@@ -618,10 +618,15 @@ function Block({
 function EventCard({ event }: { event: CalEvent }) {
   const start = new Date(event.start);
   const end = new Date(event.end);
-  const short = (end.getTime() - start.getTime()) / 60_000 < 45;
+  const minutes = (end.getTime() - start.getTime()) / 60_000;
+  const short = minutes < 45;
   return (
     <div
-      className="animate-in fade-in-0 zoom-in-95 h-full overflow-hidden rounded-md px-2 py-1 text-xs duration-300"
+      className={cn(
+        "animate-in fade-in-0 zoom-in-95 h-full overflow-hidden rounded-md px-2 text-xs duration-300",
+        // Quarter-hour blocks are 15 px tall: one tight line.
+        minutes < 25 ? "py-0 leading-[14px]" : "py-1",
+      )}
       style={eventStyle(event.color)}
       title={`${event.title}\n${format(start, "HH:mm")}–${format(end, "HH:mm")}${event.location ? `\n${event.location}` : ""}`}
     >
@@ -668,7 +673,8 @@ function TaskCard({
       onPointerDown={onPointerDown}
       onKeyDown={(e) => e.key === "Enter" && useStore.getState().openDetail(task.id)}
       className={cn(
-        "group animate-in fade-in-0 zoom-in-95 relative flex h-full cursor-grab touch-pan-y gap-2 overflow-hidden rounded-md border px-2 py-1 text-xs shadow-sm duration-300 select-none active:cursor-grabbing",
+        "group animate-in fade-in-0 zoom-in-95 relative flex h-full cursor-grab touch-pan-y gap-2 overflow-hidden rounded-md border px-2 text-xs shadow-sm duration-300 select-none active:cursor-grabbing",
+        duration < 25 ? "items-center py-0 leading-[13px]" : "py-1",
         "bg-background hover:shadow-md",
         selected && "ring-primary ring-2",
         task.completed && "opacity-60",
@@ -680,7 +686,11 @@ function TaskCard({
         onPointerDown={(e) => e.stopPropagation()}
         onCheckedChange={() => void useStore.getState().toggleComplete(task.id)}
         aria-label={task.completed ? "Mark as not done" : "Mark as done"}
-        className={cn("mt-px size-3.5 rounded-full border-[1.5px] shadow-none", priorityBorder[priorityLevel(task.priority)])}
+        className={cn(
+          "size-3.5 rounded-full border-[1.5px] shadow-none",
+          duration < 25 ? "size-3" : "mt-px",
+          priorityBorder[priorityLevel(task.priority)],
+        )}
       />
       <div className={cn("min-w-0 flex-1", short && "flex items-center gap-1.5")}>
         <div className={cn("truncate font-medium", task.completed && "text-muted-foreground")}>
