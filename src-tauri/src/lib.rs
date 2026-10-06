@@ -1272,3 +1272,20 @@ pub fn run() {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    /// Plugins built with `init()` take no config: a `plugins.<name>` entry
+    /// for one of them stops the app at startup ("invalid type: map,
+    /// expected unit"). These are the ones on Android.
+    #[test]
+    fn plugins_without_config_have_none() {
+        for file in ["tauri.conf.json", "tauri.android.conf.json"] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file);
+            let config: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            for plugin in ["notification", "process", "opener", "log"] {
+                assert!(config["plugins"][plugin].is_null(), "{file} configures the {plugin} plugin, which takes no config");
+            }
+        }
+    }
+}

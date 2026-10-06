@@ -25,6 +25,11 @@ use crate::AppState;
 
 const CHANNEL: &str = "reminders";
 const ACTION_TYPE: &str = "reminder";
+/// The status bar icon (res/drawable) and its colour. Set on each
+/// notification: the plugin takes no `plugins.notification` config, and the
+/// app won't start with one.
+const ICON: &str = "ic_stat_tasksng";
+const ICON_COLOR: &str = "#2563EB";
 /// How far ahead reminders are given to the system. Opening TasksNG or
 /// changing anything moves the window along.
 const HORIZON_DAYS: i64 = 30;
@@ -130,6 +135,8 @@ pub fn show(app: &AppHandle, toast: &Toast) -> Result<(), String> {
         .builder()
         .id(notification_id(&key))
         .channel_id(CHANNEL)
+        .icon(ICON)
+        .icon_color(ICON_COLOR)
         .title(&toast.title)
         .body(&toast.body)
         .auto_cancel();
@@ -225,6 +232,8 @@ fn reschedule(app: &AppHandle) {
             .builder()
             .id(*id)
             .channel_id(CHANNEL)
+            .icon(ICON)
+            .icon_color(ICON_COLOR)
             .title(&u.reminder.title)
             .body(&u.reminder.body)
             .action_type_id(ACTION_TYPE)
