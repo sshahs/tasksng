@@ -4,6 +4,7 @@ import {
   CalendarIcon,
   ChevronRightIcon,
   CloudUploadIcon,
+  GitCompareArrowsIcon,
   HourglassIcon,
   ListTreeIcon,
   RepeatIcon,
@@ -47,6 +48,8 @@ export interface TaskRowProps {
   droppable: boolean;
   /** Ticked off a moment ago. */
   justDone: boolean;
+  /** Changed on this device and another one; the user hasn't chosen yet. */
+  conflict: boolean;
 }
 
 /** Where on a row the pointer is: top quarter = before, bottom = after, else inside. */
@@ -68,6 +71,7 @@ export const TaskRow = memo(function TaskRow({
   readOnly,
   droppable,
   justDone,
+  conflict,
 }: TaskRowProps) {
   const due = parseDue(task.due);
   const start = parseDue(task.start);
@@ -89,7 +93,8 @@ export const TaskRow = memo(function TaskRow({
     !!task.description ||
     task.reminders.length > 0 ||
     task.categories.length > 0 ||
-    task.pending;
+    task.pending ||
+    conflict;
 
   const select = () => useStore.getState().select(task.id);
   // Just ticked off: the circle pops, a ring goes out, the line draws through.
@@ -222,6 +227,20 @@ export const TaskRow = memo(function TaskRow({
                 <span className="size-2 shrink-0 rounded-full" style={{ background: list.color ?? "var(--muted-foreground)" }} />
                 <span className="truncate">{list.name}</span>
               </span>
+            )}
+            {conflict && (
+              <button
+                type="button"
+                className="flex shrink-0 items-center gap-1 text-amber-600 hover:underline dark:text-amber-400"
+                onMouseDown={keepFocus}
+                onClick={(e) => {
+                  stop(e);
+                  useStore.getState().set({ conflictsOpen: true });
+                }}
+              >
+                <GitCompareArrowsIcon className="size-3" />
+                Changed on two devices
+              </button>
             )}
             {inProgress && !task.completed && <span className="text-primary shrink-0">In progress</span>}
             {cancelled && <span className="shrink-0">Cancelled</span>}

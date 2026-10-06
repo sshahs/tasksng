@@ -3,6 +3,7 @@ import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
   ConnectArgs,
+  Resolution,
   DeleteResult,
   NewTask,
   SettingsPatch,
@@ -77,6 +78,7 @@ export const api = {
   moveTask: (id: string, listId: string) => call<Snapshot>("move_task", { id, listId }),
   deleteTasks: (ids: string[]) => call<DeleteResult>("delete_tasks", { ids }),
   undoDelete: (token: number) => call<Snapshot>("undo_delete", { token }),
+  resolveConflict: (id: string, resolution: Resolution) => call<Snapshot>("resolve_conflict", { id, resolution }),
   createList: (name: string, color: string | null) => call<Snapshot>("create_list", { name, color }),
   updateList: (id: string, name: string | null, color: string | null) =>
     call<Snapshot>("update_list", { id, name, color }),

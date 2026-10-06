@@ -55,7 +55,22 @@ export interface Snapshot {
   tasks: Task[];
   lastSync: string | null;
   pending: number;
+  conflicts: ConflictView[];
 }
+
+/** A task changed on this device and another one (or deleted on one of them). */
+export interface ConflictView {
+  id: string;
+  listId: string;
+  /** This device's version; null when it was deleted here. */
+  mine: Task | null;
+  /** The server's version; null when another device deleted it. */
+  theirs: Task | null;
+  at: string;
+}
+
+/** How a conflict is settled: one side, or the other side with some of our fields. */
+export type Resolution = { keep: "theirs" } | { keep: "mine" } | { keep: "merge"; patch: TaskPatch };
 
 export type SyncState = "idle" | "syncing" | "offline" | "error" | "auth-required" | "signed-out";
 

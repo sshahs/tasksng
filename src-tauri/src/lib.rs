@@ -26,7 +26,7 @@ use tasks_core::settings::{self, Settings, SettingsPatch};
 use tasks_core::alarms::{Alarms, DueReminder};
 use tasks_core::dav::{normalize_url, Credentials, DavClient};
 use tasks_core::model::{NewTask, PatchOutcome, Task, TaskPatch, TaskStatus};
-use tasks_core::store::{write_atomic, Account, Snapshot, Store, TaskList};
+use tasks_core::store::{write_atomic, Account, Resolution, Snapshot, Store, TaskList};
 use tasks_core::sync::{self, SyncReport};
 use tasks_core::Error;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
@@ -446,6 +446,18 @@ fn undo_delete(app: AppHandle, state: State<'_, AppState>, token: u64) -> Result
     let snapshot = {
         let mut store = state.store();
         store.undo_delete(token).map_err(err)?;
+        store.snapshot()
+    };
+    after_local_change(&app);
+    Ok(snapshot)
+}
+
+/// Settles a task that was changed on two devices.
+#[tauri::command(async)]
+fn resolve_conflict(app: AppHandle, state: State<'_, AppState>, id: String, resolution: Resolution) -> Result<Snapshot, String> {
+    let snapshot = {
+        let mut store = state.store();
+        store.resolve_conflict(&id, &resolution).map_err(err)?;
         store.snapshot()
     };
     after_local_change(&app);
@@ -1241,6 +1253,7 @@ pub fn run() {
             move_task,
             delete_tasks,
             undo_delete,
+            resolve_conflict,
             create_list,
             update_list,
             delete_list,

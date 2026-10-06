@@ -8,9 +8,11 @@ import { getPref, setPref } from "./prefs";
 import type { SortMode } from "./sort";
 import type {
   Account,
+  ConflictView,
   ConnectArgs,
   DueReminder,
   NewTask,
+  Resolution,
   SettingsPatch,
   SettingsView,
   Snapshot,
@@ -74,6 +76,9 @@ interface State {
 
   inflight: number;
   queued: Snapshot | null;
+  /** Tasks changed on this device and another one, waiting for the user to choose. */
+  conflicts: ConflictView[];
+  conflictsOpen: boolean;
 }
 
 interface Actions {
@@ -94,6 +99,7 @@ interface Actions {
   toggleComplete(id: string): Promise<void>;
   deleteTasks(ids: string[]): Promise<void>;
   undo(): Promise<void>;
+  resolveConflict(id: string, resolution: Resolution): Promise<void>;
   moveTask(id: string, listId: string): Promise<void>;
   createList(name: string, color: string | null): Promise<void>;
   updateList(id: string, name: string | null, color: string | null): Promise<void>;
@@ -238,6 +244,8 @@ export const useStore = create<Store>()((set, get) => {
     sorts: getPref<Record<string, SortMode>>("sorts", {}),
     searchDialog: null,
     tagDialog: null,
+    conflicts: [],
+    conflictsOpen: false,
     settings: null,
     inflight: 0,
     queued: null,
@@ -285,7 +293,20 @@ export const useStore = create<Store>()((set, get) => {
       const tasks = mergeTasks(state.tasks, s.tasks);
       const selectedId = state.selectedId && tasks[state.selectedId] ? state.selectedId : null;
       const detailOpen = state.detailOpen && !!selectedId;
+      const conflicts = s.conflicts ?? [];
+      // Say so once when a task first turns out to be changed on two devices.
+      const known = new Set(state.conflicts.map((c) => c.id));
+      const fresh = conflicts.filter((c) => !known.has(c.id));
+      if (fresh.length && state.ready) {
+        const title = (fresh[0].mine ?? fresh[0].theirs)?.summary;
+        toast.warning(fresh.length === 1 && title ? `“${title}” was changed on two devices` : "Tasks were changed on two devices", {
+          description: "Choose which version to keep.",
+          action: { label: "Choose", onClick: () => set({ conflictsOpen: true }) },
+        });
+      }
       set({
+        conflicts,
+        conflictsOpen: state.conflictsOpen && conflicts.length > 0,
         revision: s.revision,
         account: s.account,
         lists: [...s.lists].sort(
@@ -436,6 +457,15 @@ export const useStore = create<Store>()((set, get) => {
           action: { label: "Undo", onClick: () => void get().undo() },
           duration: 6000,
         });
+      } catch (e) {
+        fail(e);
+      }
+    },
+
+    async resolveConflict(id, resolution) {
+      try {
+        const snapshot = await mutate(() => api.resolveConflict(id, resolution));
+        get().applySnapshot(snapshot, true);
       } catch (e) {
         fail(e);
       }

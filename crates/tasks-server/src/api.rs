@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use tasks_core::dav::{normalize_url, Credentials, DavClient};
 use tasks_core::model::{NewTask, PatchOutcome, Task, TaskPatch, TaskStatus};
 use tasks_core::settings::{Settings, SettingsPatch};
-use tasks_core::store::{write_atomic, Account, Snapshot, Store, TaskList};
+use tasks_core::store::{write_atomic, Account, Resolution, Snapshot, Store, TaskList};
 use tasks_core::sync::{self, SyncReport};
 use tasks_core::Error;
 
@@ -399,6 +399,21 @@ async fn dispatch(state: &Arc<AppState>, cmd: &str, headers: &HeaderMap, body: &
             };
             after_local_change(&user);
             ok(result)
+        }
+        "resolve_conflict" => {
+            #[derive(Deserialize)]
+            struct A {
+                id: String,
+                resolution: Resolution,
+            }
+            let a: A = args(body)?;
+            let snapshot = {
+                let mut store = user.store();
+                store.resolve_conflict(&a.id, &a.resolution)?;
+                store.snapshot()
+            };
+            after_local_change(&user);
+            ok(snapshot)
         }
         "undo_delete" => {
             #[derive(Deserialize)]

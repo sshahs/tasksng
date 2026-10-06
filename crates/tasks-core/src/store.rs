@@ -77,6 +77,8 @@ struct Persisted {
     #[serde(default)]
     entries: Vec<Entry>,
     last_sync: Option<String>,
+    #[serde(default)]
+    conflicts: Vec<Conflict>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -88,6 +90,66 @@ pub struct Snapshot {
     pub tasks: Vec<Task>,
     pub last_sync: Option<String>,
     pub pending: usize,
+    pub conflicts: Vec<ConflictView>,
+}
+
+/// A task changed both here and on another device (or deleted on one and
+/// changed on the other). The server's version is in the store; ours is kept
+/// here until the user picks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Conflict {
+    pub href: String,
+    pub list_id: String,
+    /// Our version, `None` when we had deleted the task.
+    pub local: Option<String>,
+    /// The other device deleted the task.
+    #[serde(default)]
+    pub remote_deleted: bool,
+    /// Waiting for the server's version to be downloaded.
+    #[serde(default)]
+    pub awaiting: bool,
+    pub at: String,
+}
+
+/// A conflict as the UI sees it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictView {
+    pub id: String,
+    pub list_id: String,
+    /// This device's version (`None`: deleted here).
+    pub mine: Option<Task>,
+    /// The server's version (`None`: deleted on another device).
+    pub theirs: Option<Task>,
+    pub at: String,
+}
+
+/// How the user settled a conflict.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "keep")]
+pub enum Resolution {
+    /// The other device's version (or its deletion).
+    Theirs,
+    /// This device's version (or its deletion).
+    Mine,
+    /// The other device's version with some of our fields.
+    Merge { patch: Box<TaskPatch> },
+}
+
+/// Whether two versions of a task say the same thing (timestamps aside).
+fn same_content(a: &Task, b: &Task) -> bool {
+    a.summary == b.summary
+        && a.description == b.description
+        && a.status == b.status
+        && a.completed == b.completed
+        && a.priority == b.priority
+        && a.due == b.due
+        && a.start == b.start
+        && a.categories == b.categories
+        && a.parent_uid == b.parent_uid
+        && a.rrule == b.rrule
+        && a.reminders == b.reminders
 }
 
 /// A change that still has to be sent to the server.
@@ -120,6 +182,7 @@ pub struct Store {
     undo: HashMap<u64, Vec<UndoItem>>,
     next_undo: u64,
     unsaved: bool,
+    conflicts: HashMap<String, Conflict>,
 }
 
 /// Hrefs are compared percent-decoded so `/a%20b.ics` and `/a b.ics` match.
@@ -141,6 +204,7 @@ impl Store {
             undo: HashMap::new(),
             next_undo: 1,
             unsaved: false,
+            conflicts: HashMap::new(),
         }
     }
 
@@ -163,6 +227,7 @@ impl Store {
         store.account = data.account;
         store.lists = data.lists;
         store.last_sync = data.last_sync;
+        store.conflicts = data.conflicts.into_iter().map(|c| (key_of(&c.href), c)).collect();
         for e in data.entries {
             store.next_version = store.next_version.max(e.version + 1);
             let key = key_of(&e.href);
@@ -214,6 +279,11 @@ impl Store {
             lists: self.lists.clone(),
             entries,
             last_sync: self.last_sync.clone(),
+            conflicts: {
+                let mut c: Vec<Conflict> = self.conflicts.values().cloned().collect();
+                c.sort_by(|a, b| a.href.cmp(&b.href));
+                c
+            },
         };
         match serde_json::to_vec(&data) {
             Ok(bytes) => Some((path, bytes)),
@@ -243,7 +313,27 @@ impl Store {
             tasks: self.views.values().cloned().collect(),
             last_sync: self.last_sync.clone(),
             pending: self.pending_count(),
+            conflicts: self.conflict_views(),
         }
+    }
+
+    /// Conflicts that are ready for the user to settle, oldest first.
+    pub fn conflict_views(&self) -> Vec<ConflictView> {
+        let mut out: Vec<ConflictView> = self
+            .conflicts
+            .iter()
+            .filter(|(_, c)| !c.awaiting)
+            .map(|(key, c)| ConflictView {
+                id: c.href.clone(),
+                list_id: c.list_id.clone(),
+                mine: c.local.as_deref().and_then(|ics| model::task_from_ics(&c.href, &c.list_id, ics, false).ok()),
+                theirs: if c.remote_deleted { None } else { self.views.get(key).cloned() },
+                at: c.at.clone(),
+            })
+            .filter(|v| v.mine.is_some() || v.theirs.is_some())
+            .collect();
+        out.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.id.cmp(&b.id)));
+        out
     }
 
     pub fn pending_count(&self) -> usize {
@@ -294,6 +384,7 @@ impl Store {
             self.lists.clear();
             self.entries.clear();
             self.views.clear();
+            self.conflicts.clear();
             self.last_sync = None;
         }
         self.account = Some(account);
@@ -306,6 +397,7 @@ impl Store {
         self.entries.clear();
         self.views.clear();
         self.undo.clear();
+        self.conflicts.clear();
         self.last_sync = None;
         self.bump();
     }
@@ -578,6 +670,7 @@ impl Store {
         let list_id = entry.list_id.clone();
         let mut refetch = false;
         let mut notice = None;
+        let mut conflict: Option<(Option<String>, bool)> = None;
         match (op.state, result) {
             (EntryState::Deleted, WriteResult::Ok { .. } | WriteResult::Gone) => {
                 if unchanged {
@@ -589,25 +682,28 @@ impl Store {
                 }
             }
             (EntryState::Deleted, WriteResult::Conflict) => {
-                // Changed elsewhere: keep the server's version.
+                // Changed elsewhere: show the server's version and let the
+                // user decide whether to delete it after all.
                 entry.state = EntryState::Synced;
                 entry.etag = None;
                 refetch = true;
-                notice = Some(format!("{title} was changed on another device, so it was not deleted."));
+                conflict = Some((None, false));
             }
             (EntryState::Created | EntryState::Modified, WriteResult::Ok { etag }) => {
                 entry.etag = etag;
                 entry.state = if unchanged { EntryState::Synced } else { EntryState::Modified };
             }
             (EntryState::Created | EntryState::Modified, WriteResult::Conflict) => {
+                // Changed on another device too: the server's version comes
+                // in with the next pull, ours waits for the user.
+                conflict = Some((Some(entry.ics.clone()), false));
                 entry.state = EntryState::Synced;
                 entry.etag = None; // forces a refetch on the next pull
                 refetch = true;
-                notice = Some(format!("{title} was changed on another device; the newer server version was kept."));
             }
             (EntryState::Modified, WriteResult::Gone) => {
+                conflict = Some((Some(entry.ics.clone()), true));
                 self.entries.remove(&op.key);
-                notice = Some(format!("{title} was deleted on another device."));
             }
             (EntryState::Created, WriteResult::Gone) => {
                 notice = Some(format!("{title} could not be saved because its list no longer exists."));
@@ -615,12 +711,88 @@ impl Store {
             }
             (EntryState::Synced, _) => {}
         }
+        if let Some((local, remote_deleted)) = conflict {
+            self.conflicts.insert(
+                op.key.clone(),
+                Conflict {
+                    href: op.href.clone(),
+                    list_id: list_id.clone(),
+                    local,
+                    remote_deleted,
+                    awaiting: !remote_deleted,
+                    at: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                },
+            );
+        }
         if refetch {
             self.invalidate_list(&list_id);
         }
         self.refresh_view(&op.key);
         self.bump();
         notice
+    }
+
+    /// Settles a conflict the way the user chose.
+    pub fn resolve_conflict(&mut self, id: &str, resolution: &Resolution) -> Result<()> {
+        let key = key_of(id);
+        let conflict = self.conflicts.get(&key).cloned().ok_or_else(|| Error::NotFound("This conflict was already settled".into()))?;
+        match resolution {
+            Resolution::Theirs => {}
+            Resolution::Mine => match (&conflict.local, self.entries.contains_key(&key)) {
+                // Ours over theirs: written with the server's etag.
+                (Some(ics), true) => {
+                    self.writable_list(&conflict.list_id)?;
+                    let version = self.new_version();
+                    let entry = self.entries.get_mut(&key).expect("checked");
+                    entry.ics = ics.clone();
+                    entry.version = version;
+                    entry.state = EntryState::Modified;
+                    self.refresh_view(&key);
+                }
+                // Deleted over there: put ours back.
+                (Some(ics), false) => {
+                    self.writable_list(&conflict.list_id)?;
+                    self.insert_local(conflict.href.clone(), conflict.list_id.clone(), ics.clone());
+                }
+                // We had deleted it: delete it after all.
+                (None, true) => {
+                    self.conflicts.remove(&key);
+                    self.delete_tasks(std::slice::from_ref(&conflict.href))?;
+                    return Ok(());
+                }
+                (None, false) => {}
+            },
+            Resolution::Merge { patch } => {
+                self.update_task(&conflict.href, patch)?;
+            }
+        }
+        self.conflicts.remove(&key);
+        self.bump();
+        Ok(())
+    }
+
+    /// Drops conflicts that turned out not to be any (both devices made the
+    /// same change) or whose task is gone for good.
+    fn settle_conflicts(&mut self) {
+        let keys: Vec<String> = self.conflicts.keys().cloned().collect();
+        for key in keys {
+            let c = &self.conflicts[&key];
+            if c.awaiting || c.remote_deleted {
+                continue;
+            }
+            let settled = match (&c.local, self.views.get(&key)) {
+                (Some(ics), Some(theirs)) => {
+                    model::task_from_ics(&c.href, &c.list_id, ics, false).is_ok_and(|mine| same_content(&mine, theirs))
+                }
+                // Deleted on both sides.
+                (None, None) => !self.entries.contains_key(&key),
+                _ => false,
+            };
+            if settled {
+                self.conflicts.remove(&key);
+                self.bump();
+            }
+        }
     }
 
     /// Forces the next pull to re-list this collection.
@@ -680,6 +852,7 @@ impl Store {
             self.entries.remove(&k);
             self.views.remove(&k);
         }
+        self.conflicts.retain(|_, c| ids.contains(&c.list_id));
         let visible_change = lists.len() != self.lists.len()
             || lists.iter().zip(&self.lists).any(|(a, b)| a.id != b.id || a.name != b.name || a.color != b.color || a.order != b.order || a.read_only != b.read_only);
         self.lists = lists;
@@ -713,6 +886,9 @@ impl Store {
             if self.entries.get(&key).is_some_and(|e| e.state != EntryState::Synced) {
                 continue; // local changes win until they are pushed
             }
+            if let Some(c) = self.conflicts.get_mut(&key) {
+                c.awaiting = false;
+            }
             let same = self.entries.get(&key).is_some_and(|e| e.ics == obj.data && e.etag == obj.etag);
             if !same {
                 self.entries.insert(
@@ -740,11 +916,17 @@ impl Store {
         for k in removed {
             self.entries.remove(&k);
             self.views.remove(&k);
+            // Gone from the server while we waited for its version.
+            if let Some(c) = self.conflicts.get_mut(&k) {
+                c.awaiting = false;
+                c.remote_deleted = true;
+            }
             changed = true;
         }
         if let Some(l) = self.lists.iter_mut().find(|l| l.id == list_id) {
             l.ctag = ctag;
         }
+        self.settle_conflicts();
         if changed {
             self.bump();
         } else {
@@ -926,4 +1108,123 @@ mod tests {
         s.update_lists(&[RemoteCalendar { href: L.into(), name: "Shared".into(), color: None, order: None, ctag: None, supports_todo: true, read_only: true }]);
         assert!(s.create_task(L, &new("x")).is_err());
     }
+
+    /// A task that reached the server (etag "e1"), then the server's copy as
+    /// another device changed it.
+    fn synced(s: &mut Store, summary: &str) -> Task {
+        let t = s.create_task(L, &new(summary)).unwrap();
+        let op = s.pending_ops().remove(0);
+        s.apply_write(&op, WriteResult::Ok { etag: Some("e1".into()) });
+        t
+    }
+
+    fn server_copy(s: &Store, id: &str, from: &str, to: &str) -> RemoteObject {
+        let e = &s.entries[&key_of(id)];
+        RemoteObject { href: e.href.clone(), etag: Some("e2".into()), data: e.ics.replace(from, to) }
+    }
+
+    fn pull_one(s: &mut Store, obj: RemoteObject) {
+        let listing = vec![(obj.href.clone(), obj.etag.clone())];
+        s.merge_list(L, &listing, vec![obj], Some("9".into()));
+    }
+
+    fn patch_summary(s: &mut Store, id: &str, summary: &str) {
+        s.update_task(id, &TaskPatch { summary: Some(summary.into()), ..Default::default() }).unwrap();
+    }
+
+    #[test]
+    fn conflicting_edits_keep_both_versions_until_chosen() {
+        let mut s = store_with_list();
+        let t = synced(&mut s, "base");
+        let theirs = server_copy(&s, &t.id, "SUMMARY:base", "SUMMARY:theirs");
+        patch_summary(&mut s, &t.id, "mine");
+        let op = s.pending_ops().remove(0);
+        assert!(s.apply_write(&op, WriteResult::Conflict).is_none());
+        // Not shown until the server's version is here.
+        assert!(s.snapshot().conflicts.is_empty());
+        pull_one(&mut s, theirs);
+        let c = s.snapshot().conflicts;
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].mine.as_ref().unwrap().summary, "mine");
+        assert_eq!(c[0].theirs.as_ref().unwrap().summary, "theirs");
+        assert_eq!(s.task(&t.id).unwrap().summary, "theirs");
+
+        s.resolve_conflict(&t.id, &Resolution::Mine).unwrap();
+        assert!(s.snapshot().conflicts.is_empty());
+        let op = s.pending_ops().remove(0);
+        assert_eq!(op.state, EntryState::Modified);
+        assert_eq!(op.etag.as_deref(), Some("e2"), "overwrites the server's version knowingly");
+        assert!(op.ics.contains("SUMMARY:mine"));
+    }
+
+    #[test]
+    fn conflicts_merge_fields_and_survive_restarts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.json");
+        let mut s = Store::open(&path);
+        s.update_lists(&store_with_list().lists.iter().map(|l| RemoteCalendar {
+            href: l.id.clone(), name: l.name.clone(), color: None, order: None, ctag: Some("1".into()), supports_todo: true, read_only: false,
+        }).collect::<Vec<_>>());
+        let t = synced(&mut s, "base");
+        let theirs = server_copy(&s, &t.id, "SUMMARY:base", "SUMMARY:base\r\nPRIORITY:1");
+        patch_summary(&mut s, &t.id, "mine");
+        let op = s.pending_ops().remove(0);
+        s.apply_write(&op, WriteResult::Conflict);
+        pull_one(&mut s, theirs);
+        s.save_now().unwrap();
+
+        let mut s = Store::open(&path);
+        assert_eq!(s.snapshot().conflicts.len(), 1);
+        let patch = TaskPatch { summary: Some("mine".into()), ..Default::default() };
+        s.resolve_conflict(&t.id, &Resolution::Merge { patch: Box::new(patch) }).unwrap();
+        let merged = s.task(&t.id).unwrap();
+        assert_eq!((merged.summary.as_str(), merged.priority), ("mine", 1));
+        assert!(s.snapshot().conflicts.is_empty());
+    }
+
+    #[test]
+    fn the_same_change_on_both_devices_is_no_conflict() {
+        let mut s = store_with_list();
+        let t = synced(&mut s, "base");
+        patch_summary(&mut s, &t.id, "same");
+        let op = s.pending_ops().remove(0);
+        let theirs = RemoteObject { href: op.href.clone(), etag: Some("e2".into()), data: op.ics.clone() };
+        s.apply_write(&op, WriteResult::Conflict);
+        pull_one(&mut s, theirs);
+        assert!(s.snapshot().conflicts.is_empty());
+        assert_eq!(s.pending_count(), 0);
+    }
+
+    #[test]
+    fn deleted_on_one_device_changed_on_the_other() {
+        // Edited here, deleted there: ours can come back.
+        let mut s = store_with_list();
+        let t = synced(&mut s, "base");
+        patch_summary(&mut s, &t.id, "mine");
+        let op = s.pending_ops().remove(0);
+        s.apply_write(&op, WriteResult::Gone);
+        let c = s.snapshot().conflicts;
+        assert!(c[0].theirs.is_none() && c[0].mine.is_some());
+        assert!(s.task(&t.id).is_none());
+        s.resolve_conflict(&t.id, &Resolution::Mine).unwrap();
+        assert_eq!(s.task(&t.id).unwrap().summary, "mine");
+        assert_eq!(s.pending_ops()[0].state, EntryState::Created);
+
+        // Deleted here, edited there: delete it after all, or keep theirs.
+        let mut s = store_with_list();
+        let t = synced(&mut s, "base");
+        let theirs = server_copy(&s, &t.id, "SUMMARY:base", "SUMMARY:theirs");
+        s.delete_tasks(std::slice::from_ref(&t.id)).unwrap();
+        let op = s.pending_ops().remove(0);
+        s.apply_write(&op, WriteResult::Conflict);
+        pull_one(&mut s, theirs);
+        let c = s.snapshot().conflicts;
+        assert!(c[0].mine.is_none());
+        assert_eq!(c[0].theirs.as_ref().unwrap().summary, "theirs");
+        s.resolve_conflict(&t.id, &Resolution::Mine).unwrap();
+        assert!(s.task(&t.id).is_none());
+        assert_eq!(s.pending_ops()[0].state, EntryState::Deleted);
+        assert!(s.snapshot().conflicts.is_empty());
+    }
+
 }

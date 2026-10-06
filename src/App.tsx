@@ -3,6 +3,7 @@ import { KeyRoundIcon } from "lucide-react";
 import { AnimatePresence, domMax, LazyMotion, m, MotionConfig } from "motion/react";
 
 import { CommandPalette } from "@/components/command-palette";
+import { ConflictBanner, ConflictDialog } from "@/components/conflict-dialog";
 import { ListDialog } from "@/components/list-dialog";
 import { SearchDialog, TagDialog } from "@/components/search-dialog";
 import { SettingsDialog } from "@/components/settings-dialog";
@@ -181,6 +182,7 @@ export default function App() {
                     </Button>
                   </div>
                 )}
+                <ConflictBanner />
                 <div className="relative flex min-h-0 flex-1">
                   <TaskPane />
                   <TaskDetail />
@@ -189,6 +191,7 @@ export default function App() {
             </div>
           )}
           <CommandPalette />
+          <ConflictDialog />
           <ListDialog />
           <SearchDialog />
           <TagDialog />

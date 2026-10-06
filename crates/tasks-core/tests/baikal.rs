@@ -10,7 +10,7 @@ use reqwest::Url;
 use tasks_core::dav::{normalize_url, Credentials, DavClient, PutCondition, WriteResult};
 use tasks_core::model::{NewTask, PatchOutcome, TaskPatch, TaskStatus};
 use tasks_core::reminders::{Related, Reminder};
-use tasks_core::store::{Account, Store};
+use tasks_core::store::{Account, Resolution, Store};
 use tasks_core::sync::{self, SyncReport};
 use tasks_core::Error;
 
@@ -203,7 +203,7 @@ async fn round_trip_between_two_devices() {
 }
 
 #[tokio::test]
-async fn concurrent_edit_keeps_server_version() {
+async fn concurrent_edits_become_conflicts_the_user_settles() {
     let url = need_server!();
     let a = Device::connect(&url, "test", "test").await.unwrap();
     let b = Device::connect(&url, "test", "test").await.unwrap();
@@ -212,22 +212,52 @@ async fn concurrent_edit_keeps_server_version() {
     a.sync().await;
     b.sync().await;
 
-    b.store().update_task(&t.id, &TaskPatch { summary: Some("from B".into()), ..Default::default() }).unwrap();
+    // Both change it: A sees the server's version and keeps its own.
+    b.store().update_task(&t.id, &TaskPatch { summary: Some("from B".into()), priority: Some(1), ..Default::default() }).unwrap();
     b.sync().await;
     a.store().update_task(&t.id, &TaskPatch { summary: Some("from A".into()), ..Default::default() }).unwrap();
     let report = a.sync().await;
-    assert_eq!(report.notices.len(), 1, "{:?}", report.notices);
-    assert_eq!(a.store().task(&t.id).unwrap().summary, "from B");
+    assert!(report.notices.is_empty(), "{:?}", report.notices);
+    let conflicts = a.store().snapshot().conflicts;
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].mine.as_ref().unwrap().summary, "from A");
+    assert_eq!(conflicts[0].theirs.as_ref().unwrap().summary, "from B");
     assert_eq!(a.store().pending_count(), 0);
 
-    // Deleted on B while edited on A.
+    // A keeps its title and B's priority; B gets both.
+    let patch = TaskPatch { summary: Some("from A".into()), ..Default::default() };
+    a.store().resolve_conflict(&t.id, &Resolution::Merge { patch: Box::new(patch) }).unwrap();
+    a.sync().await;
     b.sync().await;
+    let merged = b.store().task(&t.id).unwrap().clone();
+    assert_eq!((merged.summary.as_str(), merged.priority), ("from A", 1));
+    assert!(a.store().snapshot().conflicts.is_empty());
+
+    // Deleted on B while edited on A: A restores its version.
     b.store().delete_tasks(std::slice::from_ref(&t.id)).unwrap();
     b.sync().await;
-    a.store().update_task(&t.id, &TaskPatch { summary: Some("too late".into()), ..Default::default() }).unwrap();
-    let report = a.sync().await;
-    assert_eq!(report.notices.len(), 1, "{:?}", report.notices);
+    a.store().update_task(&t.id, &TaskPatch { summary: Some("still needed".into()), ..Default::default() }).unwrap();
+    a.sync().await;
+    let conflicts = a.store().snapshot().conflicts;
+    assert!(conflicts[0].theirs.is_none());
     assert!(a.store().task(&t.id).is_none());
+    a.store().resolve_conflict(&t.id, &Resolution::Mine).unwrap();
+    a.sync().await;
+    b.sync().await;
+    assert_eq!(b.store().task(&t.id).unwrap().summary, "still needed");
+
+    // Deleted on A while edited on B: A deletes it after all.
+    b.store().update_task(&t.id, &TaskPatch { summary: Some("B again".into()), ..Default::default() }).unwrap();
+    b.sync().await;
+    a.store().delete_tasks(std::slice::from_ref(&t.id)).unwrap();
+    a.sync().await;
+    let conflicts = a.store().snapshot().conflicts;
+    assert!(conflicts[0].mine.is_none());
+    assert_eq!(conflicts[0].theirs.as_ref().unwrap().summary, "B again");
+    a.store().resolve_conflict(&t.id, &Resolution::Mine).unwrap();
+    a.sync().await;
+    b.sync().await;
+    assert!(b.store().task(&t.id).is_none());
     a.drop_list(&list).await;
 }
 

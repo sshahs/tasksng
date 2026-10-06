@@ -123,6 +123,8 @@ export function TaskPane() {
   const listById = useMemo(() => new Map(lists.map((l) => [l.id, l])), [lists]);
   const all = useMemo(() => Object.values(tasks), [tasks]);
   const keep = useJustCompleted(tasks);
+  const conflicts = useStore((s) => s.conflicts);
+  const conflictIds = useMemo(() => new Set(conflicts.map((c) => c.id)), [conflicts]);
   const sections = useMemo(
     () => buildSections(view, all, { search, showCompleted, collapsed, sort, lists, savedSearches, keep }),
     // dayKey re-evaluates "today" after midnight.
@@ -513,6 +515,7 @@ export function TaskPane() {
                       readOnly={readOnly(r.task)}
                       droppable={!leaving && !!listId && section.id === "open" && !readOnly(r.task)}
                       justDone={keep.has(r.task.id)}
+                      conflict={conflictIds.has(r.task.id)}
                     />
                   ) : (
                     <h2

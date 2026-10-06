@@ -4,7 +4,20 @@
  */
 import { addDays, format } from "date-fns";
 
-import type { NewTask, Settings, SettingsPatch, SettingsView, Snapshot, SyncStatus, Task, TaskList, TaskPatch, TaskUpdate } from "./types";
+import type {
+  ConflictView,
+  NewTask,
+  Resolution,
+  Settings,
+  SettingsPatch,
+  SettingsView,
+  Snapshot,
+  SyncStatus,
+  Task,
+  TaskList,
+  TaskPatch,
+  TaskUpdate,
+} from "./types";
 
 type Handler = (payload: never) => void;
 
@@ -79,6 +92,14 @@ export function createMockBackend() {
   for (let i = 0; i < many; i++) {
     tasks.push(mk([P, W, G][i % 3], { summary: `Generated task ${i + 1}`, priority: [0, 1, 5, 9][i % 4], due: i % 5 ? null : day(i % 9) }));
   }
+  // `?conflict` pretends "Call grandma" was also changed on another device.
+  let conflicts: ConflictView[] = [];
+  if (new URLSearchParams(location.search).has("conflict")) {
+    const t = tasks.find((x) => x.summary === "Call grandma")!;
+    const mine = { ...t, summary: "Call grandma about Sunday", priority: 1 };
+    Object.assign(t, { due: `${day(1)}T11:00:00`, categories: ["family"] });
+    conflicts = [{ id: t.id, listId: t.listId, mine, theirs: t, at: new Date().toISOString() }];
+  }
   const trash = new Map<number, Task[]>();
   let token = 0;
   let lastSync: string | null = new Date().toISOString();
@@ -104,6 +125,7 @@ export function createMockBackend() {
     tasks: signedIn ? tasks : [],
     lastSync,
     pending: 0,
+    conflicts: signedIn ? conflicts : [],
   });
   const bump = () => revision++;
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -228,6 +250,24 @@ export function createMockBackend() {
       trash.set(++token, victims);
       bump();
       return { token, snapshot: snapshot() };
+    },
+    resolve_conflict: (a) => {
+      const c = conflicts.find((x) => x.id === a.id);
+      if (!c) throw new Error("This conflict was already settled");
+      const r = a.resolution as Resolution;
+      const i = tasks.findIndex((t) => t.id === c.id);
+      if (r.keep === "mine" && c.mine) {
+        if (i >= 0) tasks[i] = c.mine;
+        else tasks.push(c.mine);
+      } else if (r.keep === "mine") {
+        tasks = tasks.filter((t) => t.id !== c.id);
+      } else if (r.keep === "merge" && i >= 0) {
+        const { patch } = r;
+        tasks[i] = { ...tasks[i], ...(patch as Partial<Task>), completed: (patch.status ?? tasks[i].status) === "completed" };
+      }
+      conflicts = conflicts.filter((x) => x !== c);
+      bump();
+      return snapshot();
     },
     undo_delete: (a) => {
       tasks = [...tasks, ...(trash.get(a.token as number) ?? [])];
