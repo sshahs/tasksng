@@ -2,6 +2,7 @@ import { useState } from "react";
 import { format } from "date-fns";
 import { AlarmClockIcon, AlarmClockOffIcon, CalendarClockIcon } from "lucide-react";
 
+import { DateTimeFields } from "@/components/date-time-fields";
 import { Button } from "@/components/ui/button";
 import { ContextMenuItem, ContextMenuShortcut } from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -90,27 +91,7 @@ function SnoozeForm({ task, onDone }: { task: Task; onDone: () => void }) {
           </button>
         ))}
       </div>
-      <div className="grid grid-cols-2 gap-2">
-        <label className="grid gap-1 text-xs">
-          <span className="text-muted-foreground">Day</span>
-          <input
-            type="date"
-            value={date}
-            min={format(new Date(), "yyyy-MM-dd")}
-            onChange={(e) => setDate(e.target.value)}
-            className="border-input dark:bg-input/30 h-9 rounded-md border bg-transparent px-2 text-sm"
-          />
-        </label>
-        <label className="grid gap-1 text-xs">
-          <span className="text-muted-foreground">Time</span>
-          <input
-            type="time"
-            value={time}
-            onChange={(e) => setTime(e.target.value)}
-            className="border-input dark:bg-input/30 h-9 rounded-md border bg-transparent px-2 text-sm"
-          />
-        </label>
-      </div>
+      <DateTimeFields date={date} time={time} min={format(new Date(), "yyyy-MM-dd")} onDate={setDate} onTime={setTime} />
       <DialogFooter>
         {isSnoozed(task) && (
           <Button

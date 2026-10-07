@@ -2,6 +2,7 @@ import { useState } from "react";
 import { format } from "date-fns";
 import { CalendarClockIcon, XIcon } from "lucide-react";
 
+import { DateTimeFields } from "@/components/date-time-fields";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatDue, parseDue } from "@/lib/dates";
@@ -45,28 +46,14 @@ export function PlanPicker({ task, readOnly, onChange }: { task: Task; readOnly:
             <span className="truncate">{planned ? `Planned ${formatDue(planned)} · ${formatMinutes(minutes)}` : "Plan a time"}</span>
           </Button>
         </PopoverTrigger>
-        <PopoverContent align="start" className="grid w-72 gap-3">
-          <div className="grid grid-cols-2 gap-2">
-            <label className="grid gap-1 text-xs">
-              <span className="text-muted-foreground">Day</span>
-              <input
-                type="date"
-                value={draft.date}
-                onChange={(e) => setDraft((d) => ({ ...d, date: e.target.value }))}
-                className="border-input dark:bg-input/30 h-8 rounded-md border bg-transparent px-2 text-sm"
-              />
-            </label>
-            <label className="grid gap-1 text-xs">
-              <span className="text-muted-foreground">Time</span>
-              <input
-                type="time"
-                step={900}
-                value={draft.time}
-                onChange={(e) => setDraft((d) => ({ ...d, time: e.target.value }))}
-                className="border-input dark:bg-input/30 h-8 rounded-md border bg-transparent px-2 text-sm"
-              />
-            </label>
-          </div>
+        <PopoverContent align="start" className="grid w-80 max-w-[calc(100vw-2rem)] gap-3">
+          <DateTimeFields
+            date={draft.date}
+            time={draft.time}
+            step={900}
+            onDate={(date) => setDraft((d) => ({ ...d, date }))}
+            onTime={(time) => setDraft((d) => ({ ...d, time }))}
+          />
           <div className="grid gap-1 text-xs">
             <span className="text-muted-foreground">For</span>
             <div className="flex flex-wrap gap-1">

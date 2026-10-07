@@ -332,7 +332,9 @@ away with the task once its deletion has reached the server.
 
 Reminders show up as system notifications with *Snooze* and *Done* buttons. They are standard
 iCalendar alarms (`VALARM`), so a reminder set in Thunderbird, on an iPhone or in Tasks.org works
-here and the other way round. Tasks with a due time and no reminder of their own get an automatic
+here and the other way round. Add one from the task's details: pick a suggestion, or under
+*Custom* set your own, such as 90 minutes before the due time, 2 days before an all-day date at
+07:30, or a day and time of its own. Tasks with a due time and no reminder of their own get an automatic
 one at the due time. You can change that offset or turn it off in Settings. It stays on this
 computer and isn't written to the server.
 

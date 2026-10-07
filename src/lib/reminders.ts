@@ -113,3 +113,26 @@ export const DEFAULT_REMINDERS: { value: string; label: string; offset: number |
   { value: "-1800", label: "30 minutes before", offset: -1800 },
   { value: "-3600", label: "1 hour before", offset: -3600 },
 ];
+
+export type ReminderUnit = "minutes" | "hours" | "days" | "weeks";
+export const REMINDER_UNITS: Record<ReminderUnit, number> = { minutes: MIN, hours: HOUR, days: DAY, weeks: WEEK };
+
+/**
+ * A reminder an amount of time before (or after) the due or start date. For
+ * an all-day date only days and weeks make sense, and `timeOfDay` ("HH:mm")
+ * is when on that day it goes off.
+ */
+export function relativeReminder(
+  amount: number,
+  unit: ReminderUnit,
+  before: boolean,
+  related: "due" | "start",
+  timeOfDay: string | null = null,
+): Reminder {
+  const sign = before ? -1 : 1;
+  const n = Math.max(0, Math.round(amount));
+  if (timeOfDay === null) return { offset: sign * n * REMINDER_UNITS[unit] || 0, related };
+  const days = n * (unit === "weeks" ? 7 : 1);
+  const [h, m] = timeOfDay.split(":").map(Number);
+  return { offset: (sign * days || 0) * DAY + (h || 0) * HOUR + (m || 0) * MIN, related };
+}

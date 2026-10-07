@@ -94,7 +94,7 @@ export function QuickAdd({ dueOn, className }: { dueOn?: string; className?: str
   if (!writable.length) return null;
 
   return (
-    <div className={cn("px-4 pb-2", className)}>
+    <div className={cn("@container px-4 pb-2", className)}>
       <div
         className={cn(
           "bg-muted/50 flex items-center gap-2 rounded-lg border border-transparent px-3 transition-[background-color,border-color,box-shadow] duration-200",
@@ -129,7 +129,7 @@ export function QuickAdd({ dueOn, className }: { dueOn?: string; className?: str
         {!viewList && !mentioned && list && (
           <DropdownMenu>
             <DropdownMenuTrigger
-              className="text-muted-foreground hover:text-foreground hover:bg-accent flex max-w-40 shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs outline-none"
+              className="text-muted-foreground hover:text-foreground hover:bg-accent flex max-w-40 shrink-0 items-center gap-1.5 @max-xs:max-w-28 rounded-md px-2 py-1 text-xs outline-none"
               onMouseDown={(e) => e.preventDefault()}
             >
               <span className="size-2 shrink-0 rounded-full" style={{ background: list.color ?? "var(--muted-foreground)" }} />
@@ -157,7 +157,7 @@ export function QuickAdd({ dueOn, className }: { dueOn?: string; className?: str
           </DropdownMenu>
         )}
         {focused && !text && (
-          <span className="text-muted-foreground animate-in fade-in-0 slide-in-from-right-1 hidden shrink-0 items-center gap-1 text-xs duration-300 lg:flex">
+          <span className="text-muted-foreground animate-in fade-in-0 slide-in-from-right-1 hidden shrink-0 items-center gap-1 text-xs duration-300 @md:flex">
             <Kbd>Enter</Kbd> to add
           </span>
         )}

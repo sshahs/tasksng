@@ -368,11 +368,16 @@ export function Planner() {
             {isToday ? "Today" : format(day, "EEEE")}
           </span>
         </h1>
-        <p className="text-muted-foreground mt-0.5 truncate text-sm">
-          {format(day, "d MMMM")}
-          {plannedTotal > 0 && ` · ${formatMinutes(plannedTotal)} planned`}
-          {free > 0 && ` · ${formatMinutes(free)} free until 18:00`}
-        </p>
+        {/* Wraps between the parts instead of cutting them off in a narrow window.
+            Each part has its "·" in front; the ones that start a line are
+            shifted out of view. */}
+        <div className="mt-0.5 overflow-hidden">
+          <p className="text-muted-foreground -ml-4 flex flex-wrap text-sm *:whitespace-nowrap *:before:inline-block *:before:w-4 *:before:text-center *:before:content-['·']">
+            <span>{format(day, "d MMMM")}</span>
+            {plannedTotal > 0 && <span>{formatMinutes(plannedTotal)} planned</span>}
+            {free > 0 && <span>{formatMinutes(free)} free until 18:00</span>}
+          </p>
+        </div>
       </div>
       <div className="flex items-center gap-1">
         {error && (

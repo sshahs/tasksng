@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { humanDuration, reminderLabel, reminderPresets, reminderTime } from "./reminders";
+import { humanDuration, relativeReminder, reminderLabel, reminderPresets, reminderTime } from "./reminders";
 
 const NOW = new Date(2026, 9, 4, 10, 0, 0);
 
@@ -49,5 +49,26 @@ describe("reminders", () => {
       "Tomorrow 09:00",
       "Monday 09:00",
     ]);
+  });
+});
+
+describe("relativeReminder", () => {
+  const timed = { due: "2026-10-10T12:00:00Z", start: null };
+  const allDay = { due: "2026-10-10", start: null };
+
+  it("counts back from a due time", () => {
+    expect(relativeReminder(2, "hours", true, "due")).toEqual({ offset: -7200, related: "due" });
+    expect(relativeReminder(3, "days", false, "due")).toEqual({ offset: 3 * 86_400, related: "due" });
+    expect(relativeReminder(0, "minutes", true, "due")).toEqual({ offset: 0, related: "due" });
+    expect(reminderLabel(relativeReminder(90, "minutes", true, "due"), timed)).toBe("1 hour 30 minutes before");
+  });
+
+  it("goes off at a time of day for all-day dates", () => {
+    const r = relativeReminder(2, "days", true, "due", "07:30");
+    expect(r).toEqual({ offset: -2 * 86_400 + 7 * 3600 + 1800, related: "due" });
+    expect(reminderLabel(r, allDay)).toBe("2 days before at 07:30");
+    expect(reminderLabel(relativeReminder(1, "weeks", true, "due", "09:00"), allDay)).toBe("7 days before at 09:00");
+    expect(reminderLabel(relativeReminder(0, "days", true, "due", "18:00"), allDay)).toBe("On the day at 18:00");
+    expect(reminderTime(relativeReminder(1, "days", false, "due", "08:00"), allDay)).toEqual(new Date(2026, 9, 11, 8, 0));
   });
 });

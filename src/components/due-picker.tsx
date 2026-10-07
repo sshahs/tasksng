@@ -44,13 +44,34 @@ export function DuePicker({
   const time = dueTime(info);
   const overdue = warnOverdue && !completed && isOverdue(info);
 
-  const pick = (day: Date | undefined, t: string | null = time) => {
+  // The time being typed. It is saved when the field is left, on Enter or when
+  // the picker closes. Saving each complete value as it was typed (00:06,
+  // then 09:06, …) wrote the saved task back into the field mid-typing, which
+  // restarts the browser's typing in the field.
+  const [timeDraft, setTimeDraft] = useState("");
+  const [editingTime, setEditingTime] = useState(false);
+  const currentTime = (editingTime ? timeDraft : time) || null;
+
+  const pick = (day: Date | undefined, t: string | null = currentTime) => {
     if (!day) return;
     onChange(toDue(day, t));
   };
+  const commitTime = () => {
+    setEditingTime(false);
+    if (timeDraft === (time ?? "")) return;
+    // Clearing the field keeps the day and drops the time.
+    if (!timeDraft && !info) return;
+    pick(info?.date ?? new Date(), timeDraft || null);
+  };
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(o) => {
+        if (!o && editingTime) commitTime();
+        setOpen(o);
+      }}
+    >
       <div className={cn("flex items-center gap-1", className)}>
         <PopoverTrigger asChild>
           <Button
@@ -105,7 +126,8 @@ export function DuePicker({
             weekStartsOn={1}
             onSelect={(d) => {
               pick(d);
-              if (!time) setOpen(false);
+              setEditingTime(false);
+              if (!currentTime) setOpen(false);
             }}
           />
         </Suspense>
@@ -115,11 +137,34 @@ export function DuePicker({
           <Input
             type="time"
             className="h-8 flex-1"
-            value={time ?? ""}
-            onChange={(e) => pick(info?.date ?? new Date(), e.target.value || null)}
+            value={editingTime ? timeDraft : (time ?? "")}
+            onFocus={() => {
+              setTimeDraft(time ?? "");
+              setEditingTime(true);
+            }}
+            onChange={(e) => {
+              setEditingTime(true);
+              setTimeDraft(e.target.value);
+            }}
+            onBlur={commitTime}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commitTime();
+              }
+            }}
+            aria-label="Time"
           />
           {time && (
-            <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => pick(info?.date, null)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => {
+                setEditingTime(false);
+                pick(info?.date, null);
+              }}
+            >
               All day
             </Button>
           )}
