@@ -5,6 +5,7 @@ import { api, isWeb, on } from "./api";
 import { formatDue, parseDue } from "./dates";
 import { isAndroid } from "./platform";
 import { getPref, setPref } from "./prefs";
+import { snoozeLabel } from "./snooze";
 import type { SortMode } from "./sort";
 import type {
   Account,
@@ -80,6 +81,8 @@ interface State {
   /** Tasks changed on this device and another one, waiting for the user to choose. */
   conflicts: ConflictView[];
   conflictsOpen: boolean;
+  /** The task whose "Snooze until…" picker is open. */
+  snoozeDialog: string | null;
 }
 
 interface Actions {
@@ -101,6 +104,8 @@ interface Actions {
   deleteTasks(ids: string[]): Promise<void>;
   undo(): Promise<void>;
   resolveConflict(id: string, resolution: Resolution): Promise<void>;
+  /** Hides a task until `until` (or brings it back with null), with Undo. */
+  snooze(id: string, until: Date | null): Promise<void>;
   moveTask(id: string, listId: string): Promise<void>;
   createList(name: string, color: string | null): Promise<void>;
   updateList(id: string, name: string | null, color: string | null): Promise<void>;
@@ -138,6 +143,7 @@ function sameTask(a: Task, b: Task): boolean {
     a.sortOrder === b.sortOrder &&
     a.planned === b.planned &&
     a.plannedMinutes === b.plannedMinutes &&
+    a.snoozedUntil === b.snoozedUntil &&
     a.categories.join("\u0000") === b.categories.join("\u0000") &&
     JSON.stringify(a.reminders) === JSON.stringify(b.reminders)
   );
@@ -249,6 +255,7 @@ export const useStore = create<Store>()((set, get) => {
     tagDialog: null,
     conflicts: [],
     conflictsOpen: false,
+    snoozeDialog: null,
     settings: null,
     inflight: 0,
     queued: null,
@@ -462,6 +469,22 @@ export const useStore = create<Store>()((set, get) => {
         });
       } catch (e) {
         fail(e);
+      }
+    },
+
+    async snooze(id, until) {
+      const task = get().tasks[id];
+      if (!task) return;
+      const before = task.snoozedUntil;
+      const value = until ? until.toISOString().replace(/\.\d{3}Z$/, "Z") : null;
+      // It leaves the list: select a neighbour like deleting does.
+      if (value && get().selectedId === id) get().select(null);
+      await get().updateTask(id, { snoozedUntil: value });
+      if (value) {
+        toast(`Snoozed ${snoozeLabel(value)}`, {
+          description: task.summary || "Untitled task",
+          action: { label: "Undo", onClick: () => void get().updateTask(id, { snoozedUntil: before }) },
+        });
       }
     },
 

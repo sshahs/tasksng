@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlarmClockIcon,
   ArrowLeftIcon,
   BellIcon,
   CalendarClockIcon,
@@ -27,6 +28,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -37,6 +41,7 @@ import { formatTimestamp } from "@/lib/dates";
 import { toggleChecklistLine } from "@/lib/markdown";
 import { fade } from "@/lib/motion";
 import { describeRule } from "@/lib/rrule";
+import { isSnoozed, snoozeLabel } from "@/lib/snooze";
 import { useStore } from "@/lib/store";
 import type { Task, TaskPatch } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -44,6 +49,7 @@ import { compareOpen } from "@/lib/views";
 import { DuePicker } from "./due-picker";
 import { Markdown } from "./markdown";
 import { PlanPicker } from "./plan-picker";
+import { SnoozeItems } from "./snooze-menu";
 import { PRIORITIES, PriorityFlag, priorityBorder, priorityLevel } from "./priority";
 import { ReminderPicker } from "./reminder-picker";
 import { REPEAT_OPTIONS, repeatValue } from "./repeat";
@@ -237,6 +243,15 @@ function DetailBody({ task, mobile }: { task: Task; mobile: boolean }) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger disabled={readOnly || task.completed}>
+                <AlarmClockIcon /> Snooze
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-60">
+                <SnoozeItems task={task} kind="dropdown" />
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSeparator />
             {parent && (
               <DropdownMenuItem disabled={readOnly} onSelect={() => update({ parentUid: null })}>
                 <UnlinkIcon /> Make top-level task
@@ -341,6 +356,27 @@ function DetailBody({ task, mobile }: { task: Task; mobile: boolean }) {
           <Row icon={<CalendarClockIcon />}>
             <PlanPicker task={task} readOnly={readOnly} onChange={update} />
           </Row>
+          {isSnoozed(task) && (
+            <Row icon={<AlarmClockIcon className="text-amber-500" />}>
+              <div className="animate-in fade-in-0 flex min-w-0 items-center gap-1">
+                <button
+                  className="hover:bg-accent -ml-2 h-8 min-w-0 truncate rounded-md px-2 text-left text-sm transition-colors"
+                  onClick={() => useStore.getState().set({ snoozeDialog: task.id })}
+                >
+                  Snoozed {snoozeLabel(task.snoozedUntil!)}
+                </button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="text-muted-foreground shrink-0"
+                  onClick={() => void useStore.getState().snooze(task.id, null)}
+                  aria-label="Bring back now"
+                >
+                  <XIcon />
+                </Button>
+              </div>
+            </Row>
+          )}
           <Row icon={<BellIcon />}>
             <ReminderPicker task={task} readOnly={readOnly} onChange={(reminders) => update({ reminders })} />
           </Row>

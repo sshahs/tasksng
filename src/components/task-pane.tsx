@@ -3,6 +3,7 @@ import { addDays, format, nextMonday } from "date-fns";
 import { AnimatePresence, m } from "motion/react";
 import { toast } from "sonner";
 import {
+  AlarmClockIcon,
   ArrowRightLeftIcon,
   ArrowUpDownIcon,
   BookmarkPlusIcon,
@@ -70,6 +71,7 @@ import { isTouch, useIsMobile } from "@/hooks/use-mobile";
 import { dateOnly } from "@/lib/dates";
 import { planDrop, planKeyboardMove, useDrag, type DropPlan } from "@/lib/dnd";
 import { FILTER_HELP } from "@/lib/search";
+import { isSnoozed, snoozePresets } from "@/lib/snooze";
 import { SORT_MODES } from "@/lib/sort";
 import { listIdOf, searchIdOf, SMART_VIEWS, tagOf, useStore, type ViewId } from "@/lib/store";
 import type { Task, TaskPatch } from "@/lib/types";
@@ -78,6 +80,7 @@ import { buildSections, type Row, type Section } from "@/lib/views";
 import { FlipList, listItemProps } from "./animated-list";
 import { PRIORITIES, PriorityFlag } from "./priority";
 import { QuickAdd } from "./quick-add";
+import { SnoozeItems } from "./snooze-menu";
 import { STATUSES } from "./status";
 import { TaskRow } from "./task-row";
 
@@ -145,7 +148,7 @@ export function TaskPane() {
   // A row starting to leave changes the order too: the rows below glide up.
   const order = shown.map((p) => (p.leaving ? `${p.key}~` : p.key)).join("\n");
   const openRows = useMemo<Row[]>(() => (listId ? (sections.find((s) => s.id === "open")?.rows ?? []) : []), [sections, listId]);
-  const openCount = rows.filter((r) => !r.task.completed).length;
+  const openCount = rows.filter((r) => !r.task.completed && !isSnoozed(r.task)).length;
   const selected = selectedId ? tasks[selectedId] : undefined;
 
   useEffect(() => {
@@ -211,6 +214,9 @@ export function TaskPane() {
     { keys: "3", handler: () => update({ priority: 9 }) },
     { keys: "0", handler: () => update({ priority: 0 }) },
     { keys: "t", handler: () => update({ due: dateOnly(new Date()) }) },
+    // Snooze until tomorrow morning (Shift+Z: pick a time).
+    { keys: "z", handler: () => selected && void useStore.getState().snooze(selected.id, snoozePresets().find((p) => p.id === "tomorrow")!.at) },
+    { keys: "shift+z", handler: () => selected && useStore.getState().set({ snoozeDialog: selected.id }) },
     { keys: "m", handler: () => update({ due: dateOnly(addDays(new Date(), 1)) }) },
     {
       keys: "escape",
@@ -626,6 +632,14 @@ function TaskMenu({ task, readOnly, onDelete }: { task: Task; readOnly: boolean;
           <ContextMenuItem disabled={!task.due} onSelect={() => update({ due: null })}>
             <XIcon /> No due date
           </ContextMenuItem>
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+      <ContextMenuSub>
+        <ContextMenuSubTrigger disabled={readOnly || task.completed}>
+          <AlarmClockIcon /> Snooze
+        </ContextMenuSubTrigger>
+        <ContextMenuSubContent className="w-60">
+          <SnoozeItems task={task} kind="context" />
         </ContextMenuSubContent>
       </ContextMenuSub>
       <ContextMenuSub>

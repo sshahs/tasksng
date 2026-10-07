@@ -20,6 +20,8 @@ const REPEAT_FROM: &str = "X-TASKSNG-REPEAT-FROM";
 /// all-day date) would otherwise force both to become times (RFC 5545).
 const PLANNED: &str = "X-TASKSNG-PLANNED";
 const PLANNED_DURATION: &str = "X-TASKSNG-PLANNED-DURATION";
+/// Hidden until then (snoozed). It comes back with a notification.
+const SNOOZED_UNTIL: &str = "X-TASKSNG-SNOOZED-UNTIL";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -82,6 +84,8 @@ pub struct Task {
     pub planned: Option<String>,
     /// How long it is planned for, in minutes.
     pub planned_minutes: Option<u32>,
+    /// Snoozed: hidden until this time (UTC).
+    pub snoozed_until: Option<String>,
     /// Local changes that have not reached the server yet.
     pub pending: bool,
 }
@@ -126,6 +130,8 @@ pub struct TaskPatch {
     pub planned: Option<Option<String>>,
     #[serde(deserialize_with = "double_option")]
     pub planned_minutes: Option<Option<u32>>,
+    #[serde(deserialize_with = "double_option")]
+    pub snoozed_until: Option<Option<String>>,
 }
 
 fn double_option<'de, D, T>(de: D) -> Result<Option<Option<T>>, D::Error>
@@ -230,6 +236,7 @@ pub fn task_from_ics(id: &str, list_id: &str, ics: &str, pending: bool) -> Resul
         reminders: reminders::read(todo),
         planned: todo.get(PLANNED).and_then(IcalTime::from_property).map(|t| IcalTime::Utc(t.instant()).to_ui()),
         planned_minutes: todo.get(PLANNED_DURATION).and_then(|p| dates::duration_minutes(&p.value)),
+        snoozed_until: todo.get(SNOOZED_UNTIL).and_then(IcalTime::from_property).map(|t| IcalTime::Utc(t.instant()).to_ui()),
         pending,
     })
 }
@@ -382,6 +389,15 @@ fn apply_to_todo(todo: &mut Component, patch: &TaskPatch, now: DateTime<Utc>) ->
             }
         }
     }
+    if let Some(until) = &patch.snoozed_until {
+        match until {
+            Some(u) => {
+                let t = parse_time(u)?;
+                todo.set(IcalTime::Utc(t.instant()).to_property(SNOOZED_UNTIL));
+            }
+            None => todo.remove(SNOOZED_UNTIL),
+        }
+    }
     if let Some(minutes) = &patch.planned_minutes {
         match minutes.filter(|m| *m > 0) {
             Some(m) => todo.set(Property::new(PLANNED_DURATION, format!("PT{m}M"))),
@@ -467,8 +483,9 @@ fn advance_recurrence(todo: &mut Component, now: DateTime<Utc>) -> Option<String
     }
     // Reminders at a fixed time move along with the task.
     reminders::shift_absolute(todo, shift);
-    // The plan was for this occurrence.
+    // The plan and the snooze were for this occurrence.
     todo.remove(PLANNED);
+    todo.remove(SNOOZED_UNTIL);
     todo.set(Property::new("STATUS", "NEEDS-ACTION"));
     todo.remove("COMPLETED");
     todo.remove("PERCENT-COMPLETE");
@@ -729,6 +746,26 @@ mod tests {
         let (out, _) = patch_ics(&out, &TaskPatch { planned: Some(None), ..Default::default() }, now()).unwrap();
         let t = task_from_ics("a", "b", &out, false).unwrap();
         assert_eq!((t.planned, t.planned_minutes), (None, Some(90)));
+    }
+
+    #[test]
+    fn snoozing_keeps_the_dates_and_ends_with_the_occurrence() {
+        let ics = build_ics(
+            "u",
+            &NewTask { summary: "water plants".into(), due: Some("2026-10-04".into()), rrule: Some("FREQ=WEEKLY".into()), ..Default::default() },
+            now(),
+        )
+        .unwrap();
+        let snooze = TaskPatch { snoozed_until: Some(Some("2026-10-04T19:00:00+02:00".into())), ..Default::default() };
+        let (ics, _) = patch_ics(&ics, &snooze, now()).unwrap();
+        assert!(ics.contains("X-TASKSNG-SNOOZED-UNTIL:20261004T170000Z\r\n"));
+        let t = task_from_ics("a", "b", &ics, false).unwrap();
+        assert_eq!((t.snoozed_until.as_deref(), t.due.as_deref()), (Some("2026-10-04T17:00:00Z"), Some("2026-10-04")));
+        let (unsnoozed, _) = patch_ics(&ics, &TaskPatch { snoozed_until: Some(None), ..Default::default() }, now()).unwrap();
+        assert_eq!(task_from_ics("a", "b", &unsnoozed, false).unwrap().snoozed_until, None);
+        // Done: the next occurrence isn't snoozed.
+        let (out, _) = patch_ics(&ics, &TaskPatch { status: Some(TaskStatus::Completed), ..Default::default() }, now()).unwrap();
+        assert_eq!(task_from_ics("a", "b", &out, false).unwrap().snoozed_until, None);
     }
 
     #[test]

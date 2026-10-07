@@ -32,6 +32,8 @@ export interface Task {
   planned: string | null;
   /** How long it is planned for. */
   plannedMinutes: number | null;
+  /** Snoozed: hidden until this moment (UTC instant). */
+  snoozedUntil: string | null;
   /** Not yet saved to the server. */
   pending: boolean;
 }
@@ -133,6 +135,7 @@ export interface TaskPatch {
   reminders?: Reminder[];
   planned?: string | null;
   plannedMinutes?: number | null;
+  snoozedUntil?: string | null;
 }
 
 export interface TaskUpdate {

@@ -1,5 +1,6 @@
 import { memo } from "react";
 import {
+  AlarmClockIcon,
   BellIcon,
   CalendarIcon,
   ChevronRightIcon,
@@ -17,6 +18,7 @@ import { isMobileLayout, isTouch } from "@/hooks/use-mobile";
 import { formatDue, isDueToday, isOverdue, parseDue } from "@/lib/dates";
 import { DRAG_TYPE, useDrag, type DropPos } from "@/lib/dnd";
 import { startsLater } from "@/lib/search";
+import { isSnoozed, snoozeLabel } from "@/lib/snooze";
 import { useStore } from "@/lib/store";
 import type { Task, TaskList } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -94,7 +96,8 @@ export const TaskRow = memo(function TaskRow({
     task.reminders.length > 0 ||
     task.categories.length > 0 ||
     task.pending ||
-    conflict;
+    conflict ||
+    !!task.snoozedUntil;
 
   const select = () => useStore.getState().select(task.id);
   // Just ticked off: the circle pops, a ring goes out, the line draws through.
@@ -241,6 +244,12 @@ export const TaskRow = memo(function TaskRow({
                 <GitCompareArrowsIcon className="size-3" />
                 Changed on two devices
               </button>
+            )}
+            {task.snoozedUntil && !task.completed && isSnoozed(task) && (
+              <span className="flex shrink-0 items-center gap-1 text-amber-600 dark:text-amber-400">
+                <AlarmClockIcon className="size-3" />
+                Snoozed {snoozeLabel(task.snoozedUntil)}
+              </span>
             )}
             {inProgress && !task.completed && <span className="text-primary shrink-0">In progress</span>}
             {cancelled && <span className="shrink-0">Cancelled</span>}

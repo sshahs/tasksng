@@ -67,6 +67,7 @@ interface WidgetItem {
   due: string | null;
   start: string | null;
   planned: string | null;
+  snoozedUntil: string | null;
   color: string | null;
   priority: number;
 }
@@ -91,6 +92,7 @@ export function widgetItems(tasks: Task[], lists: TaskList[], now = new Date()):
       due: t.due,
       start: t.start,
       planned: t.planned,
+      snoozedUntil: t.snoozedUntil,
       color: color.get(t.listId) ?? null,
       priority: t.priority,
     }));

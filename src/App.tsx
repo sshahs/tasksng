@@ -8,6 +8,7 @@ import { ListDialog } from "@/components/list-dialog";
 import { Planner } from "@/components/planner";
 import { SearchDialog, TagDialog } from "@/components/search-dialog";
 import { SettingsDialog } from "@/components/settings-dialog";
+import { SnoozeDialog } from "@/components/snooze-menu";
 import { SetupScreen } from "@/components/setup-screen";
 import { Sidebar, SidebarDrawer } from "@/components/sidebar";
 import { TaskDetail } from "@/components/task-detail";
@@ -22,6 +23,7 @@ import { takeLaunchAction, useAndroid } from "@/lib/android";
 import { api, windowReady } from "@/lib/api";
 import { spring } from "@/lib/motion";
 import { getPref } from "@/lib/prefs";
+import { nextWake } from "@/lib/snooze";
 import { SMART_VIEWS, useStore, type ViewId } from "@/lib/store";
 import { useUpdates } from "@/lib/updater";
 
@@ -60,6 +62,18 @@ function useAutoSync() {
       window.removeEventListener("focus", onFocus);
     };
   }, [signedIn, minutes, offline]);
+}
+
+/** Shows snoozed tasks again when their time comes (the views recompute). */
+function useSnoozeWake() {
+  const tasks = useStore((s) => s.tasks);
+  useEffect(() => {
+    const next = nextWake(Object.values(tasks));
+    if (!next) return;
+    const delay = Math.min(next.getTime() - Date.now() + 500, 24 * 3600_000);
+    const id = window.setTimeout(() => useStore.setState((s) => ({ tasks: { ...s.tasks } })), Math.max(delay, 0));
+    return () => window.clearTimeout(id);
+  }, [tasks]);
 }
 
 /** Looks for updates shortly after start-up and then every six hours. */
@@ -108,6 +122,7 @@ export default function App() {
   }, []);
 
   useAutoSync();
+  useSnoozeWake();
   useAutoUpdate();
   useAndroid();
 
@@ -194,6 +209,7 @@ export default function App() {
           )}
           <CommandPalette />
           <ConflictDialog />
+          <SnoozeDialog />
           <ListDialog />
           <SearchDialog />
           <TagDialog />

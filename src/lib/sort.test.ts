@@ -25,6 +25,7 @@ const task = (p: Partial<Task>): Task => ({
   reminders: [],
   planned: null,
   plannedMinutes: null,
+  snoozedUntil: null,
   pending: false,
   ...p,
 });

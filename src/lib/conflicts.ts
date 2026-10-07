@@ -1,6 +1,7 @@
 import { formatDue, parseDue } from "./dates";
 import { reminderLabel } from "./reminders";
 import { describeRule } from "./rrule";
+import { snoozeLabel } from "./snooze";
 import type { ConflictView, Resolution, Task, TaskPatch } from "./types";
 
 export type Side = "mine" | "theirs";
@@ -104,6 +105,13 @@ export const FIELDS: ConflictField[] = [
       return `${formatDue(at)} for ${t.plannedMinutes ?? 30} min`;
     },
     patch: (t) => ({ planned: t.planned, plannedMinutes: t.plannedMinutes }),
+  },
+  {
+    key: "snoozedUntil",
+    label: "Snoozed",
+    same: (a, b) => (a.snoozedUntil ?? "") === (b.snoozedUntil ?? ""),
+    show: (t) => (t.snoozedUntil ? `Snoozed ${snoozeLabel(t.snoozedUntil)}` : "Not snoozed"),
+    patch: (t) => ({ snoozedUntil: t.snoozedUntil }),
   },
   {
     key: "parentUid",

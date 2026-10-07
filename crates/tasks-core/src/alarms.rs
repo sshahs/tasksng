@@ -145,15 +145,26 @@ fn timed_due(task: &Task) -> Option<DateTime<Utc>> {
     (!due.is_date()).then(|| due.instant())
 }
 
-/// When `task`'s reminders go off.
+/// When `task`'s reminders go off. A snoozed task stays quiet until the
+/// snooze ends, and then says it's back.
 pub fn fire_times(task: &Task, default_reminder: Option<i64>) -> Vec<DateTime<Utc>> {
-    if !task.reminders.is_empty() {
-        return task.reminders.iter().filter_map(|r| r.fire_time(task)).collect();
+    let mut times = if !task.reminders.is_empty() {
+        task.reminders.iter().filter_map(|r| r.fire_time(task)).collect()
+    } else {
+        match (default_reminder, timed_due(task)) {
+            (Some(offset), Some(due)) => vec![due + Duration::seconds(offset)],
+            _ => Vec::new(),
+        }
+    };
+    if let Some(until) = snoozed_until(task) {
+        times.retain(|t| *t > until);
+        times.push(until);
     }
-    match (default_reminder, timed_due(task)) {
-        (Some(offset), Some(due)) => vec![due + Duration::seconds(offset)],
-        _ => Vec::new(),
-    }
+    times
+}
+
+fn snoozed_until(task: &Task) -> Option<DateTime<Utc>> {
+    IcalTime::parse_ui(task.snoozed_until.as_deref()?).map(IcalTime::instant)
 }
 
 /// Finds the reminders that are due now and records them as shown.
@@ -352,4 +363,17 @@ mod tests {
         assert!(collect(std::iter::once(&t), &[], &mut s, Some(0), at("2026-10-04T10:00:10Z")).is_empty());
         assert_eq!(s.since, Some(at("2026-10-04T10:00:10Z")));
     }
+
+    #[test]
+    fn a_snoozed_task_stays_quiet_and_says_when_it_is_back() {
+        let mut t = task("s", Some("2026-10-04T10:00:00Z"), vec![Reminder::Relative { offset: 0, related: Related::Due }]);
+        t.snoozed_until = Some("2026-10-04T18:00:00Z".into());
+        assert_eq!(fire_times(&t, None), vec![at("2026-10-04T18:00:00Z")]);
+        // A reminder after the snooze still goes off.
+        t.snoozed_until = Some("2026-10-04T08:00:00Z".into());
+        let mut times = fire_times(&t, None);
+        times.sort();
+        assert_eq!(times, vec![at("2026-10-04T08:00:00Z"), at("2026-10-04T10:00:00Z")]);
+    }
+
 }

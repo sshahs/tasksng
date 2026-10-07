@@ -61,6 +61,7 @@ export function createMockBackend() {
       reminders: [],
       planned: null,
       plannedMinutes: null,
+      snoozedUntil: null,
       pending: false,
       ...p,
     };
@@ -191,6 +192,7 @@ export function createMockBackend() {
     if (p.reminders !== undefined) next.reminders = p.reminders;
     if (p.planned !== undefined) next.planned = p.planned;
     if (p.plannedMinutes !== undefined) next.plannedMinutes = p.plannedMinutes;
+    if (p.snoozedUntil !== undefined) next.snoozedUntil = p.snoozedUntil;
     if (p.rrule !== undefined) {
       next.rrule = p.rrule;
       if (p.rrule && !next.due) next.due = day(0);

@@ -2,6 +2,7 @@ import { addDays, isSameDay, startOfDay } from "date-fns";
 
 import { isDueToday, isOverdue, parseDue } from "./dates";
 import { startsLater } from "./search";
+import { isSnoozed } from "./snooze";
 import type { CalEvent, Task } from "./types";
 import { isInView, plannedOn } from "./views";
 
@@ -95,7 +96,7 @@ export function trayTasks(all: Task[], day: Date, now = new Date()): Task[] {
     return isOverdue(due, now) && !isDueToday(due, now) ? 0 : 1;
   };
   return all
-    .filter((t) => !t.completed && !plannedOn(t, day) && !(today && startsLater(t, now)) && forDay(t))
+    .filter((t) => !t.completed && !isSnoozed(t, now) && !plannedOn(t, day) && !(today && startsLater(t, now)) && forDay(t))
     .sort(
       (a, b) =>
         rank(a) - rank(b) ||

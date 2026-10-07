@@ -19,8 +19,8 @@ function matches(e: KeyboardEvent, spec: string): boolean {
   }
   const ctrl = e.ctrlKey || e.metaKey;
   if (ctrl !== want.ctrl || e.altKey !== want.alt) return false;
-  // Shifted symbols ("?") already encode shift in e.key.
-  if (want.shift !== e.shiftKey && key.length > 1) return false;
+  // Shifted symbols ("?") already encode shift in e.key; letters don't ("z" vs "shift+z").
+  if (want.shift !== e.shiftKey && (key.length > 1 || /^[a-z]$/.test(key))) return false;
   const k = e.key.toLowerCase();
   return k === key || (key === "space" && k === " ") || (key === "esc" && k === "escape");
 }

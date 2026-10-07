@@ -2,6 +2,7 @@ import { startOfDay } from "date-fns";
 
 import { formatDayHeading, isDueToday, isOverdue, parseDue } from "./dates";
 import { matchesQuery, parseQuery, startsLater, type Query, type QueryContext } from "./search";
+import { isSnoozed } from "./snooze";
 import { comparator, compareDone, compareOpen, type SortMode } from "./sort";
 import type { Task, TaskList } from "./types";
 
@@ -157,7 +158,15 @@ export function buildSections(view: ViewId, all: Task[], opts: ViewOptions): Sec
   // Finished tasks are hidden unless asked for (or the saved search is about them).
   const showDone = opts.showCompleted || !!q?.wantsDone || !!search?.wantsDone;
   const keep = showDone ? null : opts.keep;
-  const open = inThisView.filter((t) => !t.completed || !!keep?.has(t.id));
+  const notDone = inThisView.filter((t) => !t.completed || !!keep?.has(t.id));
+  // Snoozed tasks are out of the way until they come back: in a section of
+  // their own in lists, left out of Today, Upcoming and Important.
+  const snoozed = notDone.filter((t) => !t.completed && isSnoozed(t, now));
+  const hidden = new Set(snoozed.map((t) => t.id));
+  const open = hidden.size ? notDone.filter((t) => !hidden.has(t.id)) : notDone;
+  const bySnooze = (a: Task, b: Task) => (a.snoozedUntil ?? "").localeCompare(b.snoozedUntil ?? "") || sort(a, b);
+  const snoozedSection = (): Section[] =>
+    snoozed.length ? [{ id: "snoozed", title: "Snoozed", tone: "muted", rows: flat(snoozed.sort(bySnooze), all) }] : [];
   const done = showDone ? inThisView.filter((t) => t.completed) : [];
   const sections: Section[] = [];
 
@@ -198,6 +207,7 @@ export function buildSections(view: ViewId, all: Task[], opts: ViewOptions): Sec
         (parseDue(a.start)?.date.getTime() ?? 0) - (parseDue(b.start)?.date.getTime() ?? 0) || sort(a, b);
       sections.push({ id: "later", title: "Starts later", tone: "muted", rows: tree(later, all, opts, byStart) });
     }
+    sections.push(...snoozedSection());
     const shown = new Set(openRows.map((r) => r.task.id));
     const rest = done.filter((t) => !shown.has(t.id));
     if (rest.length) sections.push({ id: "done", title: "Completed", tone: "muted", rows: tree(rest, all, opts, compareDone) });
@@ -207,6 +217,7 @@ export function buildSections(view: ViewId, all: Task[], opts: ViewOptions): Sec
     const later = search || q?.wantsLater ? [] : open.filter((t) => startsLater(t, now));
     sections.push({ id: "open", title: null, rows: flat(open.filter((t) => !later.includes(t)).sort(sort), all) });
     if (later.length) sections.push({ id: "later", title: "Starts later", tone: "muted", rows: flat(later.sort(sort), all) });
+    sections.push(...snoozedSection());
   }
 
   if (done.length) sections.push({ id: "done", title: "Completed", tone: "muted", rows: flat(done.sort(compareDone), all) });
@@ -223,9 +234,9 @@ export function countOpen(
   const q = viewQuery(view, opts.savedSearches);
   let n = 0;
   // The planner counts what is planned for today.
-  if (view === "plan") return all.filter((t) => !t.completed && plannedOn(t, now)).length;
+  if (view === "plan") return all.filter((t) => !t.completed && !isSnoozed(t, now) && plannedOn(t, now)).length;
   for (const t of all) {
-    if (t.completed || !inView(view, t, now, q, ctx)) continue;
+    if (t.completed || isSnoozed(t, now) || !inView(view, t, now, q, ctx)) continue;
     // Counts match the main section, without tasks that start later.
     if (view !== "upcoming" && !q?.wantsLater && startsLater(t, now)) continue;
     n++;

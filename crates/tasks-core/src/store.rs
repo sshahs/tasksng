@@ -155,6 +155,7 @@ fn same_content(a: &Task, b: &Task) -> bool {
         && a.reminders == b.reminders
         && a.planned == b.planned
         && a.planned_minutes == b.planned_minutes
+        && a.snoozed_until == b.snoozed_until
 }
 
 /// Calendar events of a day (or any range) as last downloaded, so the day

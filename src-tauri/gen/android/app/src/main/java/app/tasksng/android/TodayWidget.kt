@@ -44,6 +44,7 @@ class TodayWidget : AppWidgetProvider() {
     val due: String?,
     val start: String?,
     val planned: String?,
+    val snoozedUntil: String?,
     val color: String?,
     val priority: Int,
   )
@@ -84,7 +85,16 @@ class TodayWidget : AppWidgetProvider() {
         (0 until array.length()).map { i ->
           val o = array.getJSONObject(i)
           fun text(name: String) = if (o.isNull(name)) null else o.optString(name).ifEmpty { null }
-          Item(o.getString("id"), o.optString("title"), text("due"), text("start"), text("planned"), text("color"), o.optInt("priority"))
+          Item(
+            o.getString("id"),
+            o.optString("title"),
+            text("due"),
+            text("start"),
+            text("planned"),
+            text("snoozedUntil"),
+            text("color"),
+            o.optInt("priority"),
+          )
         }
       }.getOrDefault(emptyList())
     }
@@ -113,7 +123,11 @@ class TodayWidget : AppWidgetProvider() {
       val time = DateTimeFormatter.ofPattern("HH:mm")
       val day = DateTimeFormatter.ofPattern("d MMM")
       val out = mutableListOf<Pair<Row, String>>()
+      val now = LocalDateTime.now(zone())
       for (item in items(context)) {
+        // Snoozed tasks stay out of sight until they come back.
+        val snoozed = parse(item.snoozedUntil)
+        if (snoozed != null && snoozed.isAfter(now)) continue
         val due = parse(item.due)
         val start = parse(item.start)
         val planned = parse(item.planned)?.takeIf { it.toLocalDate() == today }
@@ -162,10 +176,18 @@ class TodayWidget : AppWidgetProvider() {
       manager.updateAppWidget(id, views)
     }
 
-    /** Redraws just after midnight, when other tasks are due. */
+    /** Redraws just after midnight, when other tasks are due, or when a snoozed task comes back if that's sooner. */
     private fun scheduleMidnight(context: Context) {
       val alarms = context.getSystemService(AlarmManager::class.java) ?: return
-      val next = ZonedDateTime.now(zone()).toLocalDate().plusDays(1).atStartOfDay(zone()).plusMinutes(1)
+      val midnight = ZonedDateTime.now(zone()).toLocalDate().plusDays(1).atStartOfDay(zone()).plusMinutes(1)
+      val now = LocalDateTime.now(zone())
+      val wake = items(context)
+        .mapNotNull { parse(it.snoozedUntil) }
+        .filter { it.isAfter(now) }
+        .minOrNull()
+        ?.atZone(zone())
+        ?.plusSeconds(30)
+      val next = if (wake != null && wake.isBefore(midnight)) wake else midnight
       val intent = Intent(context, TodayWidget::class.java).setAction(ACTION_REFRESH)
       val pending = PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
       alarms.set(AlarmManager.RTC, next.toInstant().toEpochMilli(), pending)
