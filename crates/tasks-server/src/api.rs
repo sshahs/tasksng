@@ -416,6 +416,15 @@ async fn dispatch(state: &Arc<AppState>, cmd: &str, headers: &HeaderMap, body: &
             after_local_change(&user);
             ok(snapshot)
         }
+        "task_history" => {
+            #[derive(Deserialize)]
+            struct A {
+                id: String,
+            }
+            let a: A = args(body)?;
+            let history = user.store().history(&a.id);
+            ok(history)
+        }
         "undo_delete" => {
             #[derive(Deserialize)]
             struct A {

@@ -19,6 +19,8 @@ import type {
   TaskList,
   TaskPatch,
   TaskUpdate,
+  TaskVersion,
+  VersionSource,
 } from "./types";
 
 type Handler = (payload: never) => void;
@@ -174,6 +176,31 @@ export function createMockBackend() {
     if (!t) throw new Error("This task no longer exists");
     return t;
   };
+  /** Versions per task id, oldest first, like the real store keeps them. */
+  const history = new Map<string, TaskVersion[]>();
+  const record = (before: Task | null, after: Task, source: VersionSource) => {
+    const list = history.get(after.id) ?? [];
+    if (!list.length && before) list.push({ at: before.modified ?? before.created ?? new Date().toISOString(), source: "earlier", task: before });
+    const last = list[list.length - 1];
+    const now = new Date().toISOString();
+    if (last && source === "here" && (last.source === "here" || last.source === "created") && Date.now() - new Date(last.at).getTime() < 180_000) {
+      list[list.length - 1] = { ...last, at: last.source === "here" ? now : last.at, task: after };
+    } else {
+      list.push({ at: now, source, task: after });
+    }
+    history.set(after.id, list.slice(-25));
+  };
+  {
+    // Some past for the launch task, so History has something to show.
+    const ago = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+    history.set(launch.id, [
+      { at: ago(72), source: "earlier", task: { ...launch, summary: "Prepare product launch", priority: 5, due: day(5), categories: [] } },
+      { at: ago(50), source: "elsewhere", task: { ...launch, summary: "Prepare Q4 product launch", priority: 5, due: day(3), categories: [] } },
+      { at: ago(26), source: "here", task: { ...launch, due: day(3), description: "Draft the announcement first." } },
+      { at: ago(3), source: "elsewhere", task: launch },
+    ]);
+  }
+
   const descendants = (t: Task): Task[] => {
     const kids = tasks.filter((k) => k.parentUid === t.uid && k.listId === t.listId);
     return [t, ...kids.flatMap(descendants)];
@@ -254,6 +281,7 @@ export function createMockBackend() {
         sortOrder: input.sortOrder ?? null,
       });
       tasks = [...tasks, t];
+      record(null, t, "created");
       bump();
       return { task: t, revision, advancedTo: null };
     },
@@ -261,6 +289,7 @@ export function createMockBackend() {
       const t = find(a.id as string);
       const { next, advancedTo } = applyPatch(t, a.patch as TaskPatch);
       tasks = tasks.map((x) => (x.id === t.id ? next : x));
+      record(t, next, "here");
       bump();
       return { task: next, revision, advancedTo };
     },
@@ -269,6 +298,7 @@ export function createMockBackend() {
         const t = find(u.id);
         const { next } = applyPatch(t, u.patch);
         tasks = tasks.map((x) => (x.id === t.id ? next : x));
+        record(t, next, "here");
       }
       bump();
       return snapshot();
@@ -294,6 +324,7 @@ export function createMockBackend() {
       bump();
       return { token, snapshot: snapshot() };
     },
+    task_history: (a) => [...(history.get(a.id as string) ?? [])].reverse(),
     get_events: async (a) => {
       await sleep(250);
       const from = new Date(String(a.from));

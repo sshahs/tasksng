@@ -27,7 +27,7 @@ use tasks_core::alarms::{Alarms, DueReminder};
 use tasks_core::dav::{normalize_url, Credentials, DavClient};
 use tasks_core::events::{self, EventsResult};
 use tasks_core::model::{NewTask, PatchOutcome, Task, TaskPatch, TaskStatus};
-use tasks_core::store::{write_atomic, Account, Resolution, Snapshot, Store, TaskList};
+use tasks_core::store::{write_atomic, Account, Resolution, Snapshot, Store, TaskList, VersionView};
 use tasks_core::sync::{self, SyncReport};
 use tasks_core::Error;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
@@ -489,6 +489,12 @@ fn resolve_conflict(app: AppHandle, state: State<'_, AppState>, id: String, reso
     };
     after_local_change(&app);
     Ok(snapshot)
+}
+
+/// Earlier versions of a task, newest first.
+#[tauri::command]
+fn task_history(state: State<'_, AppState>, id: String) -> Vec<VersionView> {
+    state.store().history(&id)
 }
 
 fn require_connection(state: &AppState) -> Result<Arc<Connection>, String> {
@@ -1281,6 +1287,7 @@ pub fn run() {
             delete_tasks,
             undo_delete,
             resolve_conflict,
+            task_history,
             get_events,
             create_list,
             update_list,

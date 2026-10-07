@@ -11,7 +11,7 @@ use reqwest::Url;
 use tasks_core::dav::{normalize_url, Credentials, DavClient, PutCondition, WriteResult};
 use tasks_core::model::{NewTask, PatchOutcome, TaskPatch, TaskStatus};
 use tasks_core::reminders::{Related, Reminder};
-use tasks_core::store::{Account, Resolution, Store};
+use tasks_core::store::{Account, Resolution, Store, VersionSource};
 use tasks_core::sync::{self, SyncReport};
 use tasks_core::Error;
 
@@ -190,6 +190,19 @@ async fn round_trip_between_two_devices() {
     b.sync().await;
     a.sync().await;
     assert!(a.store().task(&child.id).unwrap().completed);
+
+    // A's history shows how it was created, then B's two changes, newest first.
+    let sources: Vec<_> = a.store().history(&child.id).iter().map(|v| (v.source, v.task.status)).collect();
+    assert_eq!(
+        sources,
+        vec![
+            (VersionSource::Elsewhere, TaskStatus::Completed),
+            (VersionSource::Elsewhere, TaskStatus::InProcess),
+            (VersionSource::Created, TaskStatus::NeedsAction),
+        ]
+    );
+    // Pushing our own edit and reading it back is no extra version.
+    assert!(b.store().history(&child.id).iter().all(|v| v.source != VersionSource::Elsewhere));
 
     // Deleting the parent on A removes the subtask everywhere.
     a.store().delete_tasks(std::slice::from_ref(&parent.id)).unwrap();

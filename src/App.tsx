@@ -8,6 +8,7 @@ import { ListDialog } from "@/components/list-dialog";
 import { Planner } from "@/components/planner";
 import { SearchDialog, TagDialog } from "@/components/search-dialog";
 import { SettingsDialog } from "@/components/settings-dialog";
+import { HistoryDialog } from "@/components/history-dialog";
 import { SnoozeDialog } from "@/components/snooze-menu";
 import { SetupScreen } from "@/components/setup-screen";
 import { Sidebar, SidebarDrawer } from "@/components/sidebar";
@@ -210,6 +211,7 @@ export default function App() {
           <CommandPalette />
           <ConflictDialog />
           <SnoozeDialog />
+          <HistoryDialog />
           <ListDialog />
           <SearchDialog />
           <TagDialog />

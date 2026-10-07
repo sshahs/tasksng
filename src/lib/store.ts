@@ -83,6 +83,8 @@ interface State {
   conflictsOpen: boolean;
   /** The task whose "Snooze until…" picker is open. */
   snoozeDialog: string | null;
+  /** The task whose history is open. */
+  historyFor: string | null;
 }
 
 interface Actions {
@@ -256,6 +258,7 @@ export const useStore = create<Store>()((set, get) => {
     conflicts: [],
     conflictsOpen: false,
     snoozeDialog: null,
+    historyFor: null,
     settings: null,
     inflight: 0,
     queued: null,

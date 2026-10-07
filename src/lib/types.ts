@@ -99,6 +99,16 @@ export interface ConflictView {
 /** How a conflict is settled: one side, or the other side with some of our fields. */
 export type Resolution = { keep: "theirs" } | { keep: "mine" } | { keep: "merge"; patch: TaskPatch };
 
+/** Where a version of a task came from. */
+export type VersionSource = "created" | "here" | "elsewhere" | "earlier";
+
+/** One kept version of a task (newest first in a history). */
+export interface TaskVersion {
+  at: string;
+  source: VersionSource;
+  task: Task;
+}
+
 export type SyncState = "idle" | "syncing" | "offline" | "error" | "auth-required" | "signed-out";
 
 export interface SyncStatus {

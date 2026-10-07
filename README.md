@@ -305,6 +305,29 @@ everything else: they're stored in the task as `X-TASKSNG-PLANNED` and
 other apps leave it alone. Repeating events are expanded by Baikal; events are read only and
 kept for offline use.
 
+### Snooze
+
+Snooze puts a task out of the way until later: *Later today*, *This evening*, *Tomorrow*, *This
+weekend*, *Next week*, or a day and time you pick. It's in the task's right-click menu and in the
+*…* menu of its details; <kbd>Z</kbd> snoozes the selected task until tomorrow morning and
+<kbd>Shift</kbd>+<kbd>Z</kbd> asks when. A snoozed task leaves *Today*, the planner's tray, the
+counts and the Android widget, and waits in a *Snoozed* section at the bottom of its list. When
+the time comes it's back where it was, with a notification. *Bring back now* ends a snooze early.
+
+The snooze syncs as `X-TASKSNG-SNOOZED-UNTIL`, so other devices running TasksNG hide the task too
+while other apps leave the due date alone.
+
+### History
+
+TasksNG keeps the last 25 versions of each task: how it was created, what you changed here and
+what arrived from other devices. *History…* in the task's menu (or <kbd>H</kbd>) shows them newest
+first, with what each one changed. Pick an older version to see what restoring it would change,
+then *Restore this version*, which you can undo. Quick edits within a few minutes count as one
+version, and changes nobody would notice, like the order in a list, are left out.
+
+History starts when TasksNG first sees a change, stays on this device in the task cache, and goes
+away with the task once its deletion has reached the server.
+
 ### Reminders and the tray
 
 Reminders show up as system notifications with *Snooze* and *Done* buttons. They are standard
@@ -355,6 +378,8 @@ Everything works from the keyboard, and the command palette
 | <kbd>Enter</kbd> or <kbd>F2</kbd> | Edit the title |
 | <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>0</kbd> | High, medium, low or no priority |
 | <kbd>T</kbd> or <kbd>M</kbd> | Due today or tomorrow |
+| <kbd>Z</kbd> | Snooze until tomorrow morning (<kbd>Shift</kbd>+<kbd>Z</kbd> picks a time) |
+| <kbd>H</kbd> | History of the task |
 | <kbd>Del</kbd> | Delete (with undo) |
 | <kbd>Ctrl</kbd>+<kbd>Z</kbd> | Undo the delete |
 | <kbd>Ctrl</kbd>+<kbd>H</kbd> | Show or hide completed tasks |
@@ -466,11 +491,13 @@ TasksNG pushes it to the server with `PUT` (using `If-Match` or `If-None-Match`)
 
 A sync first pushes pending changes and then checks each list's `getctag`. Only lists whose
 ctag changed are listed (`calendar-query` for ETags), and only changed tasks are downloaded
-(`calendar-multiget`). If a task changed on another device in the meantime, TasksNG keeps the
-server's version and shows a notice.
+(`calendar-multiget`). If a pushed task changed on another device in the meantime, the server
+refuses the write (`412`) and TasksNG keeps both versions for you to [choose from](#sync).
 
 Manual order is stored in `X-APPLE-SORT-ORDER`, as Apple Reminders and Tasks.org do. iCalendar
 has no field for "repeat after completion", so TasksNG uses `X-TASKSNG-REPEAT-FROM`.
+Day plans and snoozes are TasksNG-only too (`X-TASKSNG-PLANNED`, `X-TASKSNG-PLANNED-DURATION`,
+`X-TASKSNG-SNOOZED-UNTIL`), and other clients keep them untouched.
 
 ## Development
 

@@ -13,6 +13,7 @@ import {
   CircleDashedIcon,
   CircleIcon,
   CopyIcon,
+  HistoryIcon,
   EyeIcon,
   EyeOffIcon,
   FlagIcon,
@@ -217,6 +218,7 @@ export function TaskPane() {
     // Snooze until tomorrow morning (Shift+Z: pick a time).
     { keys: "z", handler: () => selected && void useStore.getState().snooze(selected.id, snoozePresets().find((p) => p.id === "tomorrow")!.at) },
     { keys: "shift+z", handler: () => selected && useStore.getState().set({ snoozeDialog: selected.id }) },
+    { keys: "h", handler: () => selected && useStore.getState().set({ historyFor: selected.id }) },
     { keys: "m", handler: () => update({ due: dateOnly(addDays(new Date(), 1)) }) },
     {
       keys: "escape",
@@ -709,6 +711,10 @@ function TaskMenu({ task, readOnly, onDelete }: { task: Task; readOnly: boolean;
         }
       >
         <CopyIcon /> Duplicate
+      </ContextMenuItem>
+      <ContextMenuItem onSelect={() => useStore.getState().set({ historyFor: task.id })}>
+        <HistoryIcon /> History…
+        <ContextMenuShortcut>H</ContextMenuShortcut>
       </ContextMenuItem>
       <ContextMenuSeparator />
       <ContextMenuItem variant="destructive" disabled={readOnly} onSelect={onDelete}>

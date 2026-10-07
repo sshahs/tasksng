@@ -6,6 +6,7 @@ import type {
   Resolution,
   DeleteResult,
   EventsResult,
+  TaskVersion,
   NewTask,
   SettingsPatch,
   SettingsView,
@@ -81,6 +82,7 @@ export const api = {
   undoDelete: (token: number) => call<Snapshot>("undo_delete", { token }),
   resolveConflict: (id: string, resolution: Resolution) => call<Snapshot>("resolve_conflict", { id, resolution }),
   getEvents: (from: string, to: string) => call<EventsResult>("get_events", { from, to }),
+  taskHistory: (id: string) => call<TaskVersion[]>("task_history", { id }),
   createList: (name: string, color: string | null) => call<Snapshot>("create_list", { name, color }),
   updateList: (id: string, name: string | null, color: string | null) =>
     call<Snapshot>("update_list", { id, name, color }),

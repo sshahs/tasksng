@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::dav::{RemoteCalendar, RemoteObject, WriteResult};
@@ -82,6 +82,8 @@ struct Persisted {
     conflicts: Vec<Conflict>,
     #[serde(default)]
     events: Vec<CachedEvents>,
+    #[serde(default)]
+    history: HashMap<String, Vec<Version>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -158,6 +160,44 @@ fn same_content(a: &Task, b: &Task) -> bool {
         && a.snoozed_until == b.snoozed_until
 }
 
+/// Where a version of a task came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VersionSource {
+    /// Created on this device.
+    Created,
+    /// Changed on this device.
+    Here,
+    /// Changed on another device (arrived with a sync).
+    Elsewhere,
+    /// How the task was before its history started.
+    Earlier,
+}
+
+/// One version of a task, kept so earlier ones can be looked at and restored.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Version {
+    pub at: String,
+    pub source: VersionSource,
+    pub ics: String,
+}
+
+/// A version as the UI sees it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionView {
+    pub at: String,
+    pub source: VersionSource,
+    pub task: Task,
+}
+
+/// Versions kept per task.
+const HISTORY: usize = 25;
+/// Edits made on this device within this time count as one version (typing
+/// a title shouldn't make a version per letter).
+const COALESCE_SECS: i64 = 180;
+
 /// Calendar events of a day (or any range) as last downloaded, so the day
 /// planner shows them offline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,6 +244,7 @@ pub struct Store {
     unsaved: bool,
     conflicts: HashMap<String, Conflict>,
     events: Vec<CachedEvents>,
+    history: HashMap<String, Vec<Version>>,
 }
 
 /// Hrefs are compared percent-decoded so `/a%20b.ics` and `/a b.ics` match.
@@ -227,6 +268,7 @@ impl Store {
             unsaved: false,
             conflicts: HashMap::new(),
             events: Vec::new(),
+            history: HashMap::new(),
         }
     }
 
@@ -251,6 +293,7 @@ impl Store {
         store.last_sync = data.last_sync;
         store.conflicts = data.conflicts.into_iter().map(|c| (key_of(&c.href), c)).collect();
         store.events = data.events;
+        store.history = data.history.into_iter().map(|(href, v)| (key_of(&href), v)).collect();
         for e in data.entries {
             store.next_version = store.next_version.max(e.version + 1);
             let key = key_of(&e.href);
@@ -308,6 +351,11 @@ impl Store {
                 c
             },
             events: self.events.clone(),
+            history: {
+                // Tasks that are gone for good take their history with them.
+                self.history.retain(|k, _| self.entries.contains_key(k));
+                self.history.iter().filter_map(|(k, v)| Some((self.entries.get(k)?.href.clone(), v.clone()))).collect()
+            },
         };
         match serde_json::to_vec(&data) {
             Ok(bytes) => Some((path, bytes)),
@@ -410,6 +458,7 @@ impl Store {
             self.views.clear();
             self.conflicts.clear();
             self.events.clear();
+            self.history.clear();
             self.last_sync = None;
         }
         self.account = Some(account);
@@ -424,8 +473,70 @@ impl Store {
         self.undo.clear();
         self.conflicts.clear();
         self.events.clear();
+        self.history.clear();
         self.last_sync = None;
         self.bump();
+    }
+
+    // ----------------------------------------------------------------------
+    // History
+
+    /// Remembers a new version of a task. Changes nobody would notice (the
+    /// order in a list, timestamps) are left out.
+    fn record(&mut self, key: &str, source: VersionSource, before: Option<&str>, after: &str) {
+        let href = self.entries.get(key).map(|e| (e.href.clone(), e.list_id.clone()));
+        let Some((href, list_id)) = href else { return };
+        let parse = |ics: &str| model::task_from_ics(&href, &list_id, ics, false).ok();
+        let Some(new) = parse(after) else { return };
+        let now = Utc::now();
+        let stamp = now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let list = self.history.entry(key.to_string()).or_default();
+        if list.is_empty() {
+            if let Some(old) = before.and_then(parse) {
+                if same_content(&old, &new) {
+                    return;
+                }
+                let at = old.modified.clone().unwrap_or_else(|| stamp.clone());
+                list.push(Version { at, source: VersionSource::Earlier, ics: before.unwrap_or_default().to_string() });
+            }
+        } else if let Some(last) = list.last().and_then(|v| parse(&v.ics)) {
+            if same_content(&last, &new) {
+                return;
+            }
+        }
+        if let Some(last) = list.last_mut() {
+            let recent = DateTime::parse_from_rfc3339(&last.at).is_ok_and(|t| (now - t.with_timezone(&Utc)).num_seconds() < COALESCE_SECS);
+            if source == VersionSource::Here && matches!(last.source, VersionSource::Here | VersionSource::Created) && recent {
+                last.ics = after.to_string();
+                if last.source == VersionSource::Here {
+                    last.at = stamp;
+                }
+                return;
+            }
+        }
+        list.push(Version { at: stamp, source, ics: after.to_string() });
+        if list.len() > HISTORY {
+            list.drain(..list.len() - HISTORY);
+        }
+    }
+
+    /// A task's versions, newest first.
+    pub fn history(&self, id: &str) -> Vec<VersionView> {
+        let key = key_of(id);
+        let Some(e) = self.entries.get(&key) else { return Vec::new() };
+        self.history
+            .get(&key)
+            .map(|versions| {
+                versions
+                    .iter()
+                    .rev()
+                    .filter_map(|v| {
+                        let task = model::task_from_ics(&e.href, &e.list_id, &v.ics, false).ok()?;
+                        Some(VersionView { at: v.at.clone(), source: v.source, task })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     // ----------------------------------------------------------------------
@@ -498,7 +609,8 @@ impl Store {
         let uid = model::new_uid();
         let ics = model::build_ics(&uid, input, Utc::now())?;
         let href = format!("{list_id}{uid}.ics");
-        let key = self.insert_local(href, list_id.to_string(), ics);
+        let key = self.insert_local(href, list_id.to_string(), ics.clone());
+        self.record(&key, VersionSource::Created, None, &ics);
         self.bump();
         Ok(self.views[&key].clone())
     }
@@ -506,7 +618,9 @@ impl Store {
     pub fn update_task(&mut self, id: &str, patch: &TaskPatch) -> Result<(Task, PatchOutcome)> {
         let (key, entry) = self.live_entry(id)?;
         self.writable_list(&entry.list_id.clone())?;
+        let before = entry.ics.clone();
         let (ics, outcome) = model::patch_ics(&entry.ics, patch, Utc::now())?;
+        self.record(&key, VersionSource::Here, Some(&before), &ics);
         let version = self.new_version();
         let entry = self.entries.get_mut(&key).expect("checked");
         entry.ics = ics;
@@ -619,6 +733,9 @@ impl Store {
             }
             self.refresh_view(&k);
             let new_key = self.insert_local(href, target_list.to_string(), old.ics);
+            if let Some(h) = self.history.remove(&k) {
+                self.history.insert(new_key.clone(), h);
+            }
             if k == key {
                 moved_root = Some(new_key);
             }
@@ -791,6 +908,8 @@ impl Store {
                 // Ours over theirs: written with the server's etag.
                 (Some(ics), true) => {
                     self.writable_list(&conflict.list_id)?;
+                    let before = self.entries[&key].ics.clone();
+                    self.record(&key, VersionSource::Here, Some(&before), ics);
                     let version = self.new_version();
                     let entry = self.entries.get_mut(&key).expect("checked");
                     entry.ics = ics.clone();
@@ -939,6 +1058,7 @@ impl Store {
                 c.awaiting = false;
             }
             let same = self.entries.get(&key).is_some_and(|e| e.ics == obj.data && e.etag == obj.etag);
+            let before = self.entries.get(&key).filter(|e| e.ics != obj.data).map(|e| e.ics.clone());
             if !same {
                 self.entries.insert(
                     key.clone(),
@@ -952,6 +1072,10 @@ impl Store {
                     },
                 );
                 self.refresh_view(&key);
+                if let Some(before) = before {
+                    let after = self.entries[&key].ics.clone();
+                    self.record(&key, VersionSource::Elsewhere, Some(&before), &after);
+                }
                 changed = true;
             }
         }
@@ -1276,4 +1400,99 @@ mod tests {
         assert!(s.snapshot().conflicts.is_empty());
     }
 
+    /// Makes the last version look older than the coalescing window.
+    fn age_last(s: &mut Store, id: &str) {
+        let v = s.history.get_mut(&key_of(id)).unwrap().last_mut().unwrap();
+        v.at = (Utc::now() - chrono::Duration::minutes(10)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    }
+
+    fn rename(s: &mut Store, id: &str, to: &str) {
+        s.update_task(id, &TaskPatch { summary: Some(to.into()), ..Default::default() }).unwrap();
+    }
+
+    #[test]
+    fn history_keeps_versions_and_coalesces_quick_edits() {
+        let mut s = store_with_list();
+        let t = s.create_task(L, &new("one")).unwrap();
+        rename(&mut s, &t.id, "two");
+        rename(&mut s, &t.id, "three");
+        // Typing right after creating is still the created version.
+        let h = s.history(&t.id);
+        assert_eq!(h.len(), 1);
+        assert_eq!((h[0].source, h[0].task.summary.as_str()), (VersionSource::Created, "three"));
+
+        age_last(&mut s, &t.id);
+        rename(&mut s, &t.id, "four");
+        rename(&mut s, &t.id, "five");
+        age_last(&mut s, &t.id);
+        rename(&mut s, &t.id, "six");
+        let h: Vec<_> = s.history(&t.id).into_iter().map(|v| (v.source, v.task.summary)).collect();
+        assert_eq!(
+            h,
+            vec![
+                (VersionSource::Here, "six".to_string()),
+                (VersionSource::Here, "five".to_string()),
+                (VersionSource::Created, "three".to_string()),
+            ]
+        );
+
+        // Changes nobody sees (the order in a list) are no new version.
+        age_last(&mut s, &t.id);
+        s.update_task(&t.id, &TaskPatch { sort_order: Some(5), ..Default::default() }).unwrap();
+        assert_eq!(s.history(&t.id).len(), 3);
+    }
+
+    #[test]
+    fn history_starts_with_how_the_task_was() {
+        let mut s = store_with_list();
+        let ics = model::build_ics("A", &new("from server"), Utc::now()).unwrap();
+        let a = format!("{L}A.ics");
+        s.merge_list(L, &[(a.clone(), Some("1".into()))], vec![RemoteObject { href: a.clone(), etag: Some("1".into()), data: ics }], None);
+        assert!(s.history(&a).is_empty());
+        rename(&mut s, &a, "edited");
+        let h = s.history(&a);
+        assert_eq!(h.len(), 2);
+        assert_eq!((h[0].source, h[0].task.summary.as_str()), (VersionSource::Here, "edited"));
+        assert_eq!((h[1].source, h[1].task.summary.as_str()), (VersionSource::Earlier, "from server"));
+    }
+
+    #[test]
+    fn history_records_changes_from_elsewhere() {
+        let mut s = store_with_list();
+        let t = synced(&mut s, "mine");
+        let obj = server_copy(&s, &t.id, "SUMMARY:mine", "SUMMARY:theirs");
+        s.merge_list(L, &[(obj.href.clone(), obj.etag.clone())], vec![obj], None);
+        let h = s.history(&t.id);
+        assert_eq!(h.len(), 2);
+        assert_eq!((h[0].source, h[0].task.summary.as_str()), (VersionSource::Elsewhere, "theirs"));
+        assert_eq!(h[1].source, VersionSource::Created);
+    }
+
+    #[test]
+    fn history_is_kept_short_and_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.json");
+        let mut s = Store::open(&path);
+        s.update_lists(&[RemoteCalendar { href: L.into(), name: "Tasks".into(), color: None, order: None, ctag: None, supports_todo: true, supports_event: true, read_only: false }]);
+        let t = s.create_task(L, &new("v0")).unwrap();
+        for i in 1..=30 {
+            age_last(&mut s, &t.id);
+            rename(&mut s, &t.id, &format!("v{i}"));
+        }
+        let h = s.history(&t.id);
+        assert_eq!(h.len(), HISTORY);
+        assert_eq!(h[0].task.summary, "v30");
+        s.save_now().unwrap();
+        let s2 = Store::open(&path);
+        assert_eq!(s2.history(&t.id).len(), HISTORY);
+
+        let mut s2 = s2;
+        // History stays while the delete can be undone, and goes with the task.
+        s2.delete_tasks(std::slice::from_ref(&t.id)).unwrap();
+        for op in s2.pending_ops() {
+            s2.apply_write(&op, WriteResult::Ok { etag: None });
+        }
+        s2.save_now().unwrap();
+        assert!(Store::open(&path).history(&t.id).is_empty());
+    }
 }

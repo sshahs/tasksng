@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlarmClockIcon,
+  HistoryIcon,
   ArrowLeftIcon,
   BellIcon,
   CalendarClockIcon,
@@ -251,6 +252,9 @@ function DetailBody({ task, mobile }: { task: Task; mobile: boolean }) {
                 <SnoozeItems task={task} kind="dropdown" />
               </DropdownMenuSubContent>
             </DropdownMenuSub>
+            <DropdownMenuItem onSelect={() => useStore.getState().set({ historyFor: task.id })}>
+              <HistoryIcon /> History…
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             {parent && (
               <DropdownMenuItem disabled={readOnly} onSelect={() => update({ parentUid: null })}>
