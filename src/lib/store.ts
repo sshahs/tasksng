@@ -17,6 +17,7 @@ import type {
   SettingsPatch,
   SettingsView,
   Snapshot,
+  SyncOutcome,
   SyncStatus,
   Task,
   TaskList,
@@ -98,6 +99,8 @@ interface Actions {
   toggleCollapsed(uid: string): void;
   sync(manual?: boolean): Promise<void>;
   connect(args: ConnectArgs): Promise<void>;
+  /** A phone signed this browser in. */
+  signedIn(out: SyncOutcome): void;
   signOut(): Promise<void>;
   createTask(listId: string, input: NewTask): Promise<Task | null>;
   updateTask(id: string, patch: TaskPatch): Promise<void>;
@@ -384,6 +387,15 @@ export const useStore = create<Store>()((set, get) => {
       const out = await api.connect(args);
       get().applySnapshot(out.snapshot, true);
       if (out.error) toast.error(out.error);
+      const first = out.snapshot.lists.find((l) => !l.readOnly);
+      if (first && !getPref<string | null>("default-list", null)) setPref("default-list", first.id);
+    },
+
+    signedIn(out) {
+      get().applySnapshot(out.snapshot, true);
+      if (out.error) toast.error(out.error);
+      void api.getStatus().then((status) => set({ status }));
+      void get().loadSettings();
       const first = out.snapshot.lists.find((l) => !l.readOnly);
       if (first && !getPref<string | null>("default-list", null)) setPref("default-list", first.id);
     },

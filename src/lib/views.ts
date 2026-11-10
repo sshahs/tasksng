@@ -8,7 +8,7 @@ import type { Task, TaskList } from "./types";
 
 export { compareDone, compareOpen };
 
-export type SmartView = "today" | "plan" | "upcoming" | "important" | "all";
+export type SmartView = "today" | "plan" | "upcoming" | "important" | "all" | "overview";
 export type ViewId = SmartView | `list:${string}` | `tag:${string}` | `search:${string}`;
 
 export interface SavedSearch {
@@ -234,6 +234,7 @@ export function countOpen(
   const q = viewQuery(view, opts.savedSearches);
   let n = 0;
   // The planner counts what is planned for today.
+  if (view === "overview") return 0;
   if (view === "plan") return all.filter((t) => !t.completed && !isSnoozed(t, now) && plannedOn(t, now)).length;
   for (const t of all) {
     if (t.completed || isSnoozed(t, now) || !inView(view, t, now, q, ctx)) continue;

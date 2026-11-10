@@ -20,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { useTheme, type Theme } from "@/hooks/use-theme";
+import { PairingSection } from "@/components/pairing";
 import { api, appVersion, isTauri, isWeb } from "@/lib/api";
 import { relativeTime } from "@/lib/dates";
 import { isAndroid, isWindows, superKey } from "@/lib/platform";
@@ -141,6 +142,13 @@ export function SettingsDialog() {
                 </div>
               )}
             </section>
+          )}
+
+          {isWeb && account && (
+            <>
+              <Separator />
+              <PairingSection />
+            </>
           )}
 
           <Separator />

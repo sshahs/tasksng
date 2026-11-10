@@ -122,6 +122,8 @@
   --animate-check-ring: check-ring 520ms var(--ease-out-quint) forwards;
   --animate-rise: rise 360ms var(--ease-out-quint) both;
   --animate-shake: shake 420ms var(--ease-out-quint);
+  /* Aceternity UI's aurora background on the sign-in page. */
+  --animate-aurora: aurora 60s linear infinite;
 
   @keyframes shake {
     0% {
@@ -287,4 +289,17 @@
 ::view-transition-new(root) {
   animation-duration: 260ms;
   animation-timing-function: var(--ease-out-quint);
+}
+
+@keyframes aurora {
+  from {
+    background-position:
+      50% 50%,
+      50% 50%;
+  }
+  to {
+    background-position:
+      350% 50%,
+      350% 50%;
+  }
 }

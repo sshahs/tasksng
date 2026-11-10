@@ -5,6 +5,7 @@ import { AnimatePresence, domMax, LazyMotion, m, MotionConfig } from "motion/rea
 import { CommandPalette } from "@/components/command-palette";
 import { ConflictBanner, ConflictDialog } from "@/components/conflict-dialog";
 import { ListDialog } from "@/components/list-dialog";
+import { Overview } from "@/components/overview";
 import { Planner } from "@/components/planner";
 import { SearchDialog, TagDialog } from "@/components/search-dialog";
 import { SettingsDialog } from "@/components/settings-dialog";
@@ -202,7 +203,7 @@ export default function App() {
                 )}
                 <ConflictBanner />
                 <div className="relative flex min-h-0 flex-1">
-                  {view === "plan" ? <Planner /> : <TaskPane />}
+                  {view === "plan" ? <Planner /> : view === "overview" ? <Overview /> : <TaskPane />}
                   <TaskDetail />
                 </div>
               </m.main>

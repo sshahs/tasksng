@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import {
+  LayoutDashboardIcon,
   ArrowUpCircleIcon,
   CalendarClockIcon,
   CalendarDaysIcon,
@@ -44,6 +45,7 @@ const ICONS: Record<SmartView, React.ReactNode> = {
   upcoming: <CalendarDaysIcon className="text-rose-500" />,
   important: <FlagIcon className="text-priority-high" />,
   all: <InboxIcon className="text-sky-500" />,
+  overview: <LayoutDashboardIcon className="text-emerald-500" />,
 };
 
 const sameTarget = (a: DropTarget | null, b: DropTarget) => JSON.stringify(a) === JSON.stringify(b);
@@ -269,6 +271,13 @@ export function Sidebar({ drawer = false }: { drawer?: boolean }) {
               drop={v.id === "today" || v.id === "important" ? { kind: "view", id: v.id } : undefined}
             />
           ))}
+          <NavItem
+            active={view === "overview"}
+            onClick={() => setView("overview")}
+            icon={ICONS.overview}
+            label="Overview"
+            count={0}
+          />
         </div>
 
         <SectionHeader

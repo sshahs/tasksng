@@ -11,6 +11,8 @@ export interface ServerInfo {
   version: string;
   /** Set when everyone signs in to this one CalDAV server. */
   caldavUrl: string | null;
+  /** Phones can be paired with this server. */
+  pairing?: boolean;
 }
 
 /** Desktop-only commands, answered here. */
@@ -76,7 +78,7 @@ export function createHttpBackend() {
       const message = (body as { error?: string } | null)?.error;
       throw new Error(message ?? `The TasksNG server returned ${res.status}`);
     }
-    if (cmd === "connect" || cmd === "sign_out") connectEvents();
+    if (cmd === "connect" || cmd === "sign_out" || (cmd === "login_poll" && !(body as { status?: string } | null)?.status)) connectEvents();
     return body as T;
   }
 

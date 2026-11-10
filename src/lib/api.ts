@@ -16,6 +16,9 @@ import type {
   TaskPatch,
   TaskResult,
   TaskUpdate,
+  LinkedDevice,
+  LoginPoll,
+  PairCode,
 } from "./types";
 
 type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
@@ -98,6 +101,12 @@ export const api = {
   testNotification: () => call<void>("test_notification"),
   hideQuickAdd: () => call<void>("hide_quick_add"),
   quitApp: () => call<void>("quit_app"),
+  // The web version: pairing phones (see crates/tasks-server/src/pair.rs).
+  pairStart: () => call<PairCode>("pair_start"),
+  listDevices: () => call<LinkedDevice[]>("list_devices"),
+  unlinkDevice: (id: string) => call<LinkedDevice[]>("unlink_device", { id }),
+  loginStart: () => call<PairCode>("login_start"),
+  loginPoll: (code: string, secret: string) => call<LoginPoll>("login_poll", { code, secret }),
 };
 
 /**

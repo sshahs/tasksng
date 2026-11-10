@@ -6,7 +6,9 @@ import "./index.css";
 
 // The quick add window loads only what it needs.
 const Root =
-  windowLabel() === "quick-add"
+  location.pathname === "/pair"
+    ? lazy(() => import("./components/pairing").then((m) => ({ default: m.PairLanding })))
+    : windowLabel() === "quick-add"
     ? lazy(() => import("./quick-add-window").then((m) => ({ default: m.QuickAddWindow })))
     : lazy(() => import("./App"));
 

@@ -211,6 +211,25 @@ export interface Platform {
   autostartError: string | null;
 }
 
+/** A phone paired with the web app. */
+export interface LinkedDevice {
+  id: string;
+  name: string;
+  platform: string;
+  pairedAt: string;
+  lastSeen: string;
+}
+
+/** A code a phone scans: to link it, or to sign this browser in. */
+export interface PairCode {
+  code: string;
+  /** Only for sign-in codes: proves the browser asking is the one that showed it. */
+  secret?: string;
+  expiresIn: number;
+}
+
+export type LoginPoll = { status: "pending" | "expired" } | SyncOutcome;
+
 export interface DueReminder {
   uid: string;
   id: string;
