@@ -91,7 +91,7 @@ class ScreensTest {
         val now = ZonedDateTime.now()
         val lines = listOf(
             "Pay rent today !1 #home every month",
-            "Call the dentist today 16:30 #health",
+            "Call the dentist tomorrow 16:30 #health",
             "Water the plants yesterday every week",
             "Write the quarterly report tomorrow !2 #work",
             "Book flights fri #travel",
@@ -106,6 +106,8 @@ class ScreensTest {
         vm.createFromQuickAdd(parseQuickAdd("Draft the summary", now), list.id, parentUid = report.uid)
         vm.update(report.id, TaskPatch().description("Notes for the **report**:\n\n- [x] Outline\n- [ ] Charts\n- [ ] Review with Sam\n\nSee https://example.com/q3").status(TaskStatus.InProcess))
         val dentist = vm.snapshot.value.tasks.first { it.summary == "Call the dentist" }
+        // Planned today, so the planner screenshot has two blocks; the reminder is tomorrow, so it is
+        // still to come whatever the time of day the test runs.
         vm.plan(dentist.id, now.withHour(14).withMinute(0).withSecond(0).withNano(0).toInstant(), 45)
         val rent = vm.snapshot.value.tasks.first { it.summary == "Pay rent" }
         vm.plan(rent.id, now.withHour(10).withMinute(30).withSecond(0).withNano(0).toInstant(), 30)
@@ -120,7 +122,7 @@ class ScreensTest {
         assertEquals("FREQ=MONTHLY", saved.rrule)
         assertEquals(listOf("home"), saved.categories)
         assertNotNull(saved.planned)
-        assertTrue(vm.counts.value.views.getValue(Views.TODAY) >= 3)
+        assertTrue(vm.counts.value.views.getValue(Views.TODAY) >= 2)
 
         vm.setView(Views.TODAY)
         shot("02-today")
