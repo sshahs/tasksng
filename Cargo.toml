@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/tasks-core", "crates/tasks-server", "src-tauri"]
+members = ["crates/tasks-core", "crates/tasks-server", "crates/tasks-android", "src-tauri"]
 
 [workspace.package]
 version = "0.8.1"

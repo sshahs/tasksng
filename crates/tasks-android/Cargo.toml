@@ -1,0 +1,34 @@
+[package]
+name = "tasks-android"
+description = "The TasksNG sync engine as a JNI library for the native Android app"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "tasksng_engine"
+# cdylib: the .so the Android app loads. rlib: the unit tests.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+log.workspace = true
+url = "2"
+jni = { version = "0.21", default-features = false }
+
+# Android has no system OpenSSL: rustls with the system's certificate
+# authorities (see tasks-core's dav::rustls_roots).
+[target.'cfg(target_os = "android")'.dependencies]
+tasks-core = { path = "../tasks-core", default-features = false, features = ["rustls"] }
+android_logger = { version = "0.15", default-features = false }
+
+# The same library built for the computer, so the Kotlin bridge can be
+# tested on a JVM against a real CalDAV server.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+tasks-core = { path = "../tasks-core" }
+env_logger = { version = "0.11", default-features = false, features = ["humantime"] }
+
+[dev-dependencies]
+tempfile = "3"

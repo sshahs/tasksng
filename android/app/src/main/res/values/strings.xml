@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">TasksNG</string>
+    <string name="widget_name">Today</string>
+    <string name="widget_description">Today\'s tasks from TasksNG</string>
+    <string name="widget_empty">Nothing due today</string>
+    <string name="widget_add">Add a task</string>
+    <string name="shortcut_add">New task</string>
+    <string name="shortcut_today">Today</string>
+    <string name="shortcut_plan">Plan my day</string>
+    <string name="tile_add">New task</string>
+</resources>

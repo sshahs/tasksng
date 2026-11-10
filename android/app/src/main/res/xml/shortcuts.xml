@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press the app icon: add a task, or jump to Today or the planner. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="add"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_add"
+        android:shortcutShortLabel="@string/shortcut_add">
+        <intent
+            android:action="app.tasksng.android.widget.ADD"
+            android:targetClass="app.tasksng.android.MainActivity"
+            android:targetPackage="app.tasksng.android" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="today"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_today"
+        android:shortcutShortLabel="@string/shortcut_today">
+        <intent
+            android:action="app.tasksng.android.widget.TODAY"
+            android:targetClass="app.tasksng.android.MainActivity"
+            android:targetPackage="app.tasksng.android" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="plan"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_plan"
+        android:shortcutShortLabel="@string/shortcut_plan">
+        <intent
+            android:action="app.tasksng.android.PLAN"
+            android:targetClass="app.tasksng.android.MainActivity"
+            android:targetPackage="app.tasksng.android" />
+    </shortcut>
+</shortcuts>

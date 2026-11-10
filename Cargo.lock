@@ -4543,6 +4543,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
+name = "tasks-android"
+version = "0.8.1"
+dependencies = [
+ "android_logger",
+ "chrono",
+ "env_logger",
+ "jni 0.21.1",
+ "log",
+ "serde",
+ "serde_json",
+ "tasks-core",
+ "tempfile",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "tasks-core"
 version = "0.8.1"
 dependencies = [

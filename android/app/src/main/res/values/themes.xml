@@ -1,0 +1,9 @@
+<resources>
+    <!-- The window before Compose draws: the app's background, no title bar. -->
+    <style name="Theme.TasksNG" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

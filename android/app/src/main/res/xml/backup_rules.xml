@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The task cache is rebuilt from the server and secrets can't be read on
+     another device: only view preferences are worth backing up. -->
+<full-backup-content>
+    <include domain="sharedpref" path="tasksng.xml" />
+</full-backup-content>
