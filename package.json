@@ -1,8 +1,8 @@
 {
   "name": "tasksng",
   "private": true,
-  "version": "0.8.1",
-  "description": "A fast Windows task manager for Baikal (CalDAV) servers",
+  "version": "1.0.0",
+  "description": "A fast task manager for Baikal (CalDAV) servers",
   "type": "module",
   "scripts": {
     "dev": "vite",

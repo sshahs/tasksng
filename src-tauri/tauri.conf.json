@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "TasksNG",
-  "version": "0.8.1",
+  "version": "1.0.0",
   "identifier": "app.tasksng.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -62,8 +62,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDBENTdFRjM4M0FFNDUwNUEKUldSYVVPUTZPTzlYRFQ0ejJaSmxTOFhkcU5QVUkrSlhxbnh0cENwYThZK1ZGZXVydzNvTkxHRkYK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdEMzZCNEI5Qjg3MkVBOEUKUldTTzZuSzR1YlEyZllqZWNraHRoSEtVTmwwUEFSanVuNGRVUHVhZmFQdWVUcklpLzBQLzRmWFQK",
       "endpoints": [
+        "https://tig.sshah.email/Cheeba/tasksng/releases/download/latest/latest.json",
         "https://github.com/sshahs/tasksng/releases/latest/download/latest.json"
       ],
       "windows": {

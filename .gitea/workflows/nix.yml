@@ -1,0 +1,31 @@
+# Builds the Linux desktop app with Nix (flake.nix) and checks the NixOS
+# module, so `nix run git+<this repository>` keeps working from Gitea too.
+name: Nix
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: nix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+      - uses: https://github.com/cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            extra-substituters = https://tasksng.cachix.org
+            extra-trusted-public-keys = tasksng.cachix.org-1:FMPrtDc5KohOuU/tBd1bKryTqsz2igCxhkdO/gNn8Zg=
+      - name: Build the package
+        run: nix build .#default -L
+      - name: Smoke test
+        run: ./result/bin/tasksng --version
+      - name: Flake checks (package, NixOS module)
+        run: nix flake check -L

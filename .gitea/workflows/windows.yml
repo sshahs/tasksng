@@ -1,0 +1,124 @@
+# The Windows app (Tauri, src-tauri/) on Gitea Actions, cross-compiled on a
+# Linux runner with cargo-xwin: the NSIS installer (which updates itself) and
+# the portable exe. The MSI needs WiX on Windows and comes from GitHub.
+#
+# - Every push to main: a build, as a run artifact.
+# - Every v* tag (or a run with a version): signed updater artifacts and
+#   latest.json in the Gitea release, which the in-app updater checks first.
+#
+# Secrets: TAURI_SIGNING_PRIVATE_KEY (+ TAURI_SIGNING_PRIVATE_KEY_PASSWORD),
+# required for releases. RELEASE_TOKEN as in android.yml.
+name: Windows
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release this version (X.Y.Z). Empty: just build."
+        required: false
+        default: ""
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  XWIN_ACCEPT_LICENSE: "1"
+
+jobs:
+  installer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          tag=""
+          case "$GITHUB_REF" in refs/tags/v*) tag="${GITHUB_REF#refs/tags/}" ;; esac
+          [ -n "${{ inputs.version }}" ] && tag="v${{ inputs.version }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: https://github.com/actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: https://github.com/dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cross-compilation tools
+        run: |
+          sudo=$(command -v sudo || true)
+          $sudo apt-get update -q
+          # The bundler checks for the tray library even when building for Windows.
+          $sudo apt-get install -y -q --no-install-recommends nsis lld llvm clang libayatana-appindicator3-dev
+          # rc.exe and lib.exe for the MSVC target.
+          for t in llvm-rc llvm-lib llvm-dlltool; do
+            [ -x "/usr/bin/$t" ] || $sudo ln -sf "$(ls /usr/bin/$t-* | sort -V | tail -1)" "/usr/bin/$t"
+          done
+
+      - name: Cache
+        uses: https://github.com/actions/cache@v4
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/bin/cargo-xwin
+            ~/.cache/cargo-xwin
+            target
+          key: windows-xwin-${{ hashFiles('Cargo.lock') }}
+          restore-keys: windows-xwin-
+
+      - name: Build the installer
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          command -v cargo-xwin >/dev/null || cargo install cargo-xwin --locked
+          npm ci --no-audit --no-fund
+          node scripts/release-config.mjs
+          npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.ci.conf.json
+
+      - name: Collect
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_DOWNLOAD_BASE: ${{ github.server_url }}/${{ github.repository }}/releases/download
+        run: |
+          mkdir -p out
+          bundle=target/x86_64-pc-windows-msvc/release/bundle/nsis
+          cp "$bundle"/*-setup.exe out/
+          cp target/x86_64-pc-windows-msvc/release/tasksng.exe out/TasksNG-portable.exe
+          if [ -n "$RELEASE_TAG" ]; then
+            cp "$bundle"/*-setup.exe.sig out/
+            node scripts/updater-manifest.mjs out
+          fi
+          (cd out && sha256sum *.exe > SHA256SUMS-windows.txt)
+          ls -l out
+
+      - uses: https://github.com/actions/upload-artifact@v3
+        with:
+          name: TasksNG-windows-x64
+          path: out/
+
+      - name: Publish Gitea release
+        if: steps.version.outputs.tag != ''
+        env:
+          GITEA_URL: ${{ github.server_url }}
+          GITEA_REPO: ${{ github.repository }}
+          GITEA_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GITEA_SHA: ${{ github.sha }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          node .gitea/notes.mjs "$VERSION" > "$HOME/notes.md"
+          node .gitea/release.mjs "$TAG" "TasksNG $VERSION" "$HOME/notes.md" out/*

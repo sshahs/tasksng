@@ -122,13 +122,10 @@ jobs:
     name: Android app
     needs: test
     runs-on: ubuntu-latest
+    env:
+      TASKSNG_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2/
     steps:
       - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: npm
 
       - uses: actions/setup-java@v5
         with:
@@ -144,26 +141,28 @@ jobs:
         with:
           key: android
 
+      - uses: gradle/actions/setup-gradle@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: pdo_sqlite, dom, xml, mbstring
+          tools: composer
+
       # The runner comes with the Android SDK and NDK.
-      - name: Android NDK
-        run: echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Clippy (Android)
+      - name: Android NDK and cargo-ndk
         run: |
-          ndk_bin="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          CC_aarch64_linux_android="$ndk_bin/aarch64-linux-android26-clang" AR_aarch64_linux_android="$ndk_bin/llvm-ar" \
-            cargo clippy -p tasksng --target aarch64-linux-android -- -D warnings
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          cargo install cargo-ndk --locked
+
+      - name: Clippy (engine for Android)
+        run: cargo ndk -t arm64-v8a clippy -p tasks-android -- -D warnings
 
       # Releases are signed with the app's own key, so installed copies can be
       # updated by installing the next APK. Other builds use the debug key.
       - name: Signing key
         env:
           ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           if [[ -z "$ANDROID_KEYSTORE" ]]; then
             if [[ -n "$RELEASE_TAG" ]]; then
@@ -173,25 +172,37 @@ jobs:
             echo "No signing key: the APK is signed with a debug key."
             exit 0
           fi
-          cd src-tauri/gen/android
-          echo "$ANDROID_KEYSTORE" | base64 -d > release.jks
-          printf 'storeFile=release.jks\npassword=%s\nkeyAlias=%s\n' "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" > keystore.properties
+          echo "$ANDROID_KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "TASKSNG_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
 
-      - name: Build the APK
+      # The unit tests include the app against a real (Baikal-equivalent) server.
+      - name: Test and build the APK
+        env:
+          TASKSNG_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          TASKSNG_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          TASKSNG_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [[ -n "$RELEASE_TAG" ]]; then
-            echo "{\"version\": \"${RELEASE_TAG#v}\"}" > src-tauri/tauri.ci.conf.json
-          else
-            echo "{}" > src-tauri/tauri.ci.conf.json
-          fi
-          npx tauri android build --ci --apk --target aarch64 armv7 x86_64 --config src-tauri/tauri.ci.conf.json
+          (cd tools/baikal-dev-server && composer install --no-interaction --no-progress \
+            && BAIKAL_DB=/tmp/android.sqlite php -S 127.0.0.1:8800 router.php > /tmp/baikal.log 2>&1 &)
+          cargo build -p tasks-android
+          sleep 2
+          version="${RELEASE_TAG#v}"
+          cd android
+          TASKSNG_TEST_URL=http://127.0.0.1:8800 ./gradlew :app:testDebugUnitTest :app:assembleRelease ${version:+-Ptasksng.versionName=$version}
 
       - name: Collect artifacts
         run: |
           mkdir -p out
-          version="${RELEASE_TAG#v}"; version="${version:-$(node -p 'require("./src-tauri/tauri.conf.json").version')}"
-          cp src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk "out/TasksNG_${version}_android.apk"
+          version="${RELEASE_TAG#v}"; version="${version:-$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)}"
+          cp android/app/build/outputs/apk/release/app-release.apk "out/TasksNG_${version}_android.apk"
           ls -l out
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: TasksNG-android-screens
+          path: android/app/build/screenshots/
+          if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v4
         with:

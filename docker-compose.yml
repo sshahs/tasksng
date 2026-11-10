@@ -2,6 +2,7 @@
 # http://localhost:8080 (put it behind HTTPS before using it over a network).
 services:
   tasksng:
+    # Or tig.sshah.email/cheeba/tasksng:latest from the Gitea registry.
     image: ghcr.io/sshahs/tasksng:latest
     restart: unless-stopped
     ports:

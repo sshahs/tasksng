@@ -182,7 +182,7 @@ impl Pairing {
             .filter(|d| d.user == user)
             .map(|d| DeviceView { id: d.id.clone(), name: d.name.clone(), platform: d.platform.clone(), paired_at: d.paired_at, last_seen: d.last_seen })
             .collect();
-        out.sort_by(|a, b| b.paired_at.cmp(&a.paired_at));
+        out.sort_by_key(|d| std::cmp::Reverse(d.paired_at));
         out
     }
 

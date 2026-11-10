@@ -1,0 +1,117 @@
+# The web app's Docker image, published to this Gitea instance's container
+# registry (<gitea host>/<owner>/tasksng) and linked to this repository:
+#   main      → :latest, :sha-<short>
+#   v1.2.3    → :1.2.3, :1.2, :1 (not :0 for 0.x)
+#
+# Needs a runner with Docker (act_runner with the host's docker socket).
+# Publishing uses the automatic Actions token, or a REGISTRY_TOKEN secret (a
+# token with package write access; REGISTRY_USER: its owner, if that isn't
+# whoever pushed). Set the variable DOCKER_PLATFORMS to e.g. "linux/amd64"
+# to skip the slower emulated arm64 build.
+name: Docker image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+concurrency:
+  group: docker-${{ gitea.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: https://github.com/actions/checkout@v4
+
+      - name: Registry and image name
+        id: reg
+        run: |
+          host="${GITHUB_SERVER_URL#*://}"
+          host="${host%/}"
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+          echo "image=$host/$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - uses: https://github.com/docker/setup-qemu-action@v3
+      - uses: https://github.com/docker/setup-buildx-action@v3
+
+      - name: Image metadata
+        id: meta
+        uses: https://github.com/docker/metadata-action@v5
+        with:
+          images: ${{ steps.reg.outputs.image }}
+          tags: |
+            type=raw,value=latest,enable=${{ gitea.ref == 'refs/heads/main' }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(gitea.ref, 'refs/tags/v0.') }}
+            type=sha,format=short
+          labels: |
+            org.opencontainers.image.source=${{ gitea.server_url }}/${{ gitea.repository }}
+
+      # Build for the runner's platform first and make sure the server boots.
+      - name: Build (smoke test)
+        uses: https://github.com/docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: tasksng:smoke
+
+      # Checked from inside the container: on act_runner the job itself runs in a
+      # container, so a port published on the Docker host isn't on its localhost.
+      - name: Smoke test
+        run: |
+          docker rm -f tasksng-smoke >/dev/null 2>&1 || true
+          docker run -d --name tasksng-smoke -e TASKSNG_CALDAV_URL=https://dav.example.com tasksng:smoke
+          for i in $(seq 1 40); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' tasksng-smoke)
+            [ "$status" = healthy ] && break
+            sleep 2
+          done
+          docker logs tasksng-smoke
+          ok=true
+          [ "$(docker inspect -f '{{.State.Health.Status}}' tasksng-smoke)" = healthy ] || ok=false
+          docker exec tasksng-smoke tasksng-server healthcheck || ok=false
+          [ "$(docker exec tasksng-smoke id -u)" != 0 ] || ok=false
+          docker rm -f tasksng-smoke >/dev/null
+          $ok
+
+      - name: Log in to the Gitea container registry
+        uses: https://github.com/docker/login-action@v3
+        with:
+          registry: ${{ steps.reg.outputs.host }}
+          username: ${{ vars.REGISTRY_USER || gitea.actor }}
+          password: ${{ secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: https://github.com/docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ vars.DOCKER_PLATFORMS || 'linux/amd64,linux/arm64' }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      # Gitea doesn't tie a pushed image to its repository by itself: link it, so
+      # it shows under the repository's Packages. Already linked is fine.
+      - name: Link the package to this repository
+        env:
+          TOKEN: ${{ secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          owner="${GITHUB_REPOSITORY%%/*}"
+          repo="${GITHUB_REPOSITORY#*/}"
+          name="$(echo "$repo" | tr '[:upper:]' '[:lower:]')"
+          url="${GITHUB_SERVER_URL%/}/api/v1/packages/$owner/container/$name/-/link/$repo"
+          code=$(curl -sS -o /tmp/link.out -w '%{http_code}' -X POST -H "Authorization: token $TOKEN" "$url" || echo 000)
+          case "$code" in
+            2*) echo "Linked container package $owner/$name to $GITHUB_REPOSITORY" ;;
+            409|422) echo "Already linked: $(cat /tmp/link.out)" ;;
+            *) echo "::warning::Couldn't link the package ($code): $(cat /tmp/link.out) - link $owner/$name to $repo in the package's settings" ;;
+          esac

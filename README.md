@@ -6,7 +6,10 @@
 
 A keyboard-friendly task manager for your [Baikal](https://sabre.io/baikal/) server and other
 CalDAV servers built on sabre/dav. Runs on Windows 10 and 11, on Linux with a package for NixOS,
-on Android, and as a self-hosted web app in Docker.
+as a native Android app, and as a self-hosted web app in Docker that pairs with your phone.
+
+The main repository is mirrored at [tig.sshah.email/Cheeba/tasksng](https://tig.sshah.email/Cheeba/tasksng),
+which publishes the same releases (APK, Windows installer, Docker image).
 
 [![Build](https://github.com/sshahs/tasksng/actions/workflows/build.yml/badge.svg)](https://github.com/sshahs/tasksng/actions/workflows/build.yml)
 [![Latest release](https://img.shields.io/github/v/release/sshahs/tasksng?label=release)](https://github.com/sshahs/tasksng/releases/latest)
@@ -27,8 +30,10 @@ Every change you make lands in a local cache first and syncs in the background, 
 never waits for the network. TasksNG opens from that cache in milliseconds, keeps working
 offline, and sends queued changes once the server is reachable again.
 
-It is a [Tauri 2](https://v2.tauri.app/) app with a React and [shadcn/ui](https://ui.shadcn.com)
-interface. The Windows installer is a few MB and uses the WebView2 runtime that comes with
+On Windows and Linux it is a [Tauri 2](https://v2.tauri.app/) app with a React and
+[shadcn/ui](https://ui.shadcn.com) interface (with a few [Aceternity UI](https://ui.aceternity.com)
+components); on Android it is a native Kotlin and Jetpack Compose app. Both use the same sync
+engine, written in Rust. The Windows installer is a few MB and uses the WebView2 runtime that comes with
 Windows; on Linux it runs on WebKitGTK. Light and dark themes follow your system.
 
 Tasks are stored as standard iCalendar `VTODO`s, so Thunderbird, Apple Reminders, Tasks.org and
@@ -57,34 +62,49 @@ Builds of every commit are on the [Actions](https://github.com/sshahs/tasksng/ac
 ### Android
 
 Download `TasksNG_x.y.z_android.apk` from the
-[latest release](https://github.com/sshahs/tasksng/releases/latest) and open it on your phone. It
+[latest release](https://github.com/sshahs/tasksng/releases/latest) (or the
+[Gitea release](https://tig.sshah.email/Cheeba/tasksng/releases)) and open it on your phone. It
 needs Android 8 or later. The first time, Android asks you to allow installing apps from your
 browser or file manager. To update, install the APK of a newer release over the old one; your
-tasks and sign-in stay.
+tasks and sign-in stay. (Coming from 0.8 or earlier: uninstall that one first, because 1.0 is
+signed with a new key.)
 
-It is the same app with a layout for phones. The lists slide in from the left (☰), tapping a task
-opens its details, and long-pressing a task opens its menu (complete, due date, priority, move to
-another list …). The Back gesture closes whatever is open. Light and dark follow your phone or
-the choice in Settings.
+It is a native app built with Android's own components (Jetpack Compose, Material 3). The lists
+are in the drawer (☰), tapping a task opens its details, long-pressing it opens its menu, swiping
+it right completes it and swiping left snoozes it. Pull down to sync. Light and dark follow your
+phone or the choice in Settings, and on Android 12 and later the colours can follow your
+wallpaper.
 
 Reminders are handed to Android's alarm service, so they appear on time with *Snooze 10 min* and
-*Done* buttons even when TasksNG isn't running. Android 13 and later ask once whether TasksNG may
-show notifications. A reminder added on another device is scheduled the next time the phone
-syncs, which happens whenever you open TasksNG.
+*Done* buttons even when TasksNG isn't running, and come back after a restart. Android 13 and
+later ask once whether TasksNG may show notifications. TasksNG also syncs in the background
+(every 30 minutes by default), so a reminder added on another device is scheduled without opening
+the app.
 
 Long-press the home screen and add the *Today* widget to see today's tasks at a glance: tap one
-to open it, + to add a task. It keeps up when the day changes even if TasksNG hasn't been opened.
+to open it, + to add a task. Long-press the TasksNG icon for shortcuts (new task, Today, Plan), add
+the *New task* tile to Quick Settings, or share text from any app to TasksNG to make it a task.
 
 On Android 17 TasksNG asks to use *Nearby devices* when it starts; it needs that to reach a Baikal
 server on your home network.
 
-Your password is kept in the app's private storage. TasksNG trusts the certificate authorities
-that come with Android, not ones you installed yourself, so for a self-signed certificate turn on
-*Accept invalid TLS certificates* under *Advanced* when signing in.
+Your password is encrypted with a key in the Android Keystore. TasksNG trusts the certificate
+authorities that come with Android, not ones you installed yourself, so for a self-signed
+certificate turn on *Accept invalid TLS certificates* under *Advanced* when signing in.
 
 Builds of every commit are on the [Actions](https://github.com/sshahs/tasksng/actions) tab as the
 `TasksNG-android` artifact. They are signed with a throwaway key, so uninstall one before
 installing a release.
+
+#### Pairing with the web app
+
+If you also run the [web app](#self-hosting-with-docker), pair the two: in the web app open
+*Settings → Phones → Pair a phone*, and on the phone choose *Pair with the TasksNG web app* (on the
+sign-in screen, or in Settings) and scan the code. The phone signs in with the web app's account,
+no typing needed. From then on changes made on one appear on the other within seconds, and the
+phone can sign in other browsers: on the web app's sign-in page choose *Sign in with your phone*
+and scan the code it shows from *Settings → Pair another, or sign in a browser*. Codes are good for
+one use and five minutes. Without HTTPS the phone warns before it sends anything.
 
 ### NixOS and Nix
 
@@ -214,6 +234,11 @@ container's user (uid 10001; with a bind mount instead of a volume, run `chown 1
 folder first). Back it up like any other secret, or don't back it up at all: the
 tasks live in Baikal, and signing in again rebuilds the cache. Sessions last 90 days. Signing out
 ends the account's sessions in every browser and deletes its stored password.
+
+Paired phones (see [Pairing with the web app](#pairing-with-the-web-app)) are kept in
+`/data/devices.json`, as hashes of their tokens; *Settings → Phones* lists and removes them.
+
+The same image is published to the Gitea registry as `tig.sshah.email/cheeba/tasksng`.
 
 If Baikal uses a certificate from a private certificate authority, mount the CA certificate (PEM,
 ending in `.crt`) into `/certs`, for example `-v ./my-ca.crt:/certs/my-ca.crt:ro`.
@@ -534,29 +559,32 @@ VITE_BACKEND=server npm run dev   # proxies /api to port 8080
 
 ### Android
 
-The Android app is built from the same code with
-[Tauri's mobile support](https://v2.tauri.app/develop/#developing-your-mobile-application). You
-need the Android SDK and NDK (Android Studio installs both), JDK 17 or later, and the Rust
-targets:
+The Android app is in `android/`, a Gradle project (Kotlin, Jetpack Compose). The sync engine is
+`crates/tasks-android`, `tasks-core` behind a small JNI interface: the app sends commands with JSON
+arguments (the same ones the web server takes) and reads background events from a queue. You need
+JDK 17 or later, the Android SDK and NDK, the Rust targets and cargo-ndk:
 
 ```sh
-rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
-export ANDROID_HOME=~/Android/Sdk NDK_HOME=~/Android/Sdk/ndk/<version>
-npm run tauri android dev                # on a connected phone or an emulator, with hot reload
-npm run tauri android build -- --apk     # APK in src-tauri/gen/android/app/build/outputs/apk/
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+cargo install cargo-ndk
+export ANDROID_HOME=~/Android/Sdk ANDROID_NDK_HOME=~/Android/Sdk/ndk/<version>
+cd android
+./gradlew :app:installDebug        # builds the engine (cargoNdk task) and installs on a phone
+./gradlew :app:assembleRelease     # APK in app/build/outputs/apk/release/
 ```
 
-`src-tauri/gen/android` is the Android Studio project. TasksNG's own parts in it are
-`MainActivity.kt` (edge-to-edge layout, system bar colours, reminder buttons that start the app),
-the exact-alarm permissions in the manifest, the notification icon, and the signing setup in
-`app/build.gradle.kts`. The launcher icons come from `assets/android/`:
-`npx tauri icon assets/android/icon.json -o /tmp/icons`, then copy `/tmp/icons/android/*` into
-`app/src/main/res/`.
+`./gradlew :app:testDebugUnitTest` runs the logic tests (views, quick add, search, repeat rules,
+reminders, planner, conflicts, Markdown). With the engine built for the computer
+(`cargo build -p tasks-android`) and a Baikal test server, it also runs the whole app on the JVM
+(Robolectric), signed in to that server, and saves screenshots of every screen to
+`app/build/screenshots`:
 
-On the Rust side, `src-tauri/src/mobile.rs` schedules reminders with the notification plugin,
-and the desktop-only parts (tray, global shortcut, updater, start at login) are left out with
-`#[cfg(desktop)]`. Android has no system OpenSSL, so there the sync client uses rustls with
-Android's certificate authorities (`tasks-core`'s `rustls` feature).
+```sh
+TASKSNG_TEST_URL=http://127.0.0.1:8800 ./gradlew :app:testDebugUnitTest -Ptasksng.skipRust
+```
+
+If Maven Central rate-limits you, set `TASKSNG_MAVEN_MIRROR` to a mirror such as
+`https://maven-central.storage-download.googleapis.com/maven2/`.
 
 ### Tests
 
@@ -609,7 +637,25 @@ base64 -w0 tasksng-android.jks
 ```
 
 Add the base64 text as the secret `ANDROID_KEYSTORE`, the password as
-`ANDROID_KEYSTORE_PASSWORD` and the alias (`tasksng`) as `ANDROID_KEY_ALIAS`.
+`ANDROID_KEYSTORE_PASSWORD` and the alias (`tasksng`) as `ANDROID_KEY_ALIAS` (and
+`ANDROID_KEY_PASSWORD` if the key has a password of its own).
+
+#### On Gitea
+
+The Gitea repository ([tig.sshah.email/Cheeba/tasksng](https://tig.sshah.email/Cheeba/tasksng))
+runs `.gitea/workflows/` and publishes the same release there: `android.yml` (the APK, checked
+against the signing certificate's fingerprint), `windows.yml` (the NSIS installer, the portable exe
+and `latest.json`, cross-compiled on Linux with cargo-xwin), `docker.yml` (the image, pushed to
+Gitea's container registry and linked to the repository) and `nix.yml` (the flake). Its secrets are
+named `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`,
+`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; use the same keys as on
+GitHub, or APKs and updates from one forge won't install over the other's.
+
+While Gitea pulls the repository from GitHub, tags come from GitHub: push a tag there and Gitea's
+workflows release it once the mirror has synced (every 10 minutes, or *Synchronize now*). When the
+Gitea repository becomes the primary one, convert the mirror to a normal repository; the workflows
+then also release a version given to *Run workflow*, creating the tag. The in-app updater checks
+Gitea first and GitHub second, so either keeps installed copies up to date.
 
 For each release, first set the new version in `src-tauri/tauri.conf.json`, `package.json`
 (`npm version X.Y.Z --no-git-tag-version`) and the workspace `Cargo.toml`, and commit it. Write
@@ -641,15 +687,18 @@ they need one update by hand.
 ```
 crates/tasks-core/      platform independent sync engine (Rust)
 src-tauri/              app shell: commands, background sync, credential storage, tray, notifications
-  gen/android/          Android Studio project (MainActivity, manifest, icons, signing)
-crates/tasks-server/    web version: HTTP API, sessions, live updates (Server-Sent Events)
+crates/tasks-server/    web version: HTTP API, sessions, live updates (Server-Sent Events), phone pairing
+crates/tasks-android/   the engine for the Android app (JNI)
+android/                native Android app (Kotlin, Jetpack Compose): UI, reminders, widget, sync worker
 src/                    React UI
   components/ui/        shadcn/ui components
+  components/aceternity/ Aceternity UI components (sign-in, pairing, Overview)
   components/           app components (sidebar, task list, details, dialogs)
   lib/                  store, API bindings, date & quick-add parsing, view logic
 nix/                    Nix package and NixOS module (flake.nix at the root)
 docker/                 container entrypoint (Dockerfile and docker-compose.yml at the root)
 tools/baikal-dev-server Baikal-equivalent CalDAV server for development and tests
+.gitea/                 Gitea Actions workflows and release helper
 scripts/                release helpers used by CI (version stamping, updater manifest)
 docs/screenshots/       images used in this README
 ```
@@ -658,7 +707,7 @@ docs/screenshots/       images used in this README
 
 | | Windows | Linux | Android | Docker |
 | --- | --- | --- | --- | --- |
-| Tasks and pending changes (`tasks-cache.json`), `settings.json`, `reminders.json` | `%APPDATA%\app.tasksng.desktop\` | `~/.local/share/app.tasksng.desktop/` | the private storage of `app.tasksng.android` | `/data/users/<account>/` |
+| Tasks and pending changes (`tasks-cache.json`), `settings.json`, `reminders.json` | `%APPDATA%\app.tasksng.desktop\` | `~/.local/share/app.tasksng.desktop/` | `files/engine/` in the private storage of `app.tasksng.android` | `/data/users/<account>/` |
 | Logs | `%LOCALAPPDATA%\app.tasksng.desktop\logs\` | `~/.local/share/app.tasksng.desktop/logs/` | `adb logcat` | `docker logs` |
 
 Saved searches, sort orders and view preferences live in the app's web storage.

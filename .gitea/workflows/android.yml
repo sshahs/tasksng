@@ -1,0 +1,168 @@
+# The Android app (android/, with the Rust engine from crates/tasks-android)
+# on Gitea Actions. Gitea runs .gitea/workflows and ignores .github/workflows.
+#
+# - Every push to main: tests, and the APK as a run artifact.
+# - Every v* tag (or a run with a version): also the signed APK in the
+#   Gitea release for that tag.
+#
+# Secrets (Settings → Actions → Secrets):
+#   KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD   required for releases
+#   RELEASE_TOKEN (optional): a token with write:repository, if the automatic
+#   Actions token may not create releases.
+name: Android
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release this version (X.Y.Z). Empty: just build."
+        required: false
+        default: ""
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  # SHA-256 of the release signing certificate. Every release APK is checked
+  # against it, so phones can always update in place. Public; safe to commit.
+  SIGNING_CERT_SHA256: 39:E8:69:44:7A:11:3F:A0:97:59:08:8B:7C:FA:1A:03:43:5A:36:8B:6E:F1:BE:8F:28:10:53:B9:1F:51:D9:F2
+  # Google's mirror of Maven Central: avoids Maven Central's per-IP rate limits (HTTP 429) on runners.
+  TASKSNG_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2/
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=4
+  CARGO_TERM_COLOR: always
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      # Full URLs, so actions resolve from github.com whatever the instance's DEFAULT_ACTIONS_URL is.
+      - uses: https://github.com/actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          tag=""
+          case "$GITHUB_REF" in refs/tags/v*) tag="${GITHUB_REF#refs/tags/}" ;; esac
+          [ -n "${{ inputs.version }}" ] && tag="v${{ inputs.version }}"
+          if [ -n "$tag" ]; then
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+            echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "Release $tag"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "Build only ($GITHUB_REF)"
+          fi
+
+      - uses: https://github.com/actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: https://github.com/actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: https://github.com/android-actions/setup-android@v3
+        with:
+          packages: platform-tools ndk;29.0.14206865
+      - uses: https://github.com/dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Cache
+        uses: https://github.com/actions/cache@v4
+        continue-on-error: true # a cache server hiccup must not fail the build
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.cargo/registry
+            ~/.cargo/bin/cargo-ndk
+            target
+          key: android-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'android/**/*.gradle.kts', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: android-${{ runner.os }}-
+
+      - name: Engine tests
+        run: |
+          command -v cargo-ndk >/dev/null || cargo install cargo-ndk --locked
+          cargo test -p tasks-core --no-default-features --features rustls --lib
+          cargo test -p tasks-android
+
+      - name: Decode signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            if [ "${{ steps.version.outputs.release }}" = "true" ]; then
+              echo "::error::Missing KEYSTORE_BASE64 secret: add the four signing secrets (Settings → Actions → Secrets)."
+              exit 1
+            fi
+            echo "::warning::No signing key: this build uses the debug key and can't update an installed copy."
+            exit 0
+          fi
+          mkdir -p "$HOME/.tasksng"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$HOME/.tasksng/release.jks"
+          echo "TASKSNG_KEYSTORE_FILE=$HOME/.tasksng/release.jks" >> "$GITHUB_ENV"
+
+      - name: Test and build APK
+        working-directory: android
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/29.0.14206865
+          TASKSNG_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          TASKSNG_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          TASKSNG_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
+          ./gradlew --stacktrace :app:testDebugUnitTest :app:assembleRelease ${VERSION:+-Ptasksng.versionName=$VERSION}
+
+      - name: Collect APK
+        run: |
+          mkdir -p dist
+          if [ "${{ steps.version.outputs.release }}" = "true" ]; then
+            name="TasksNG_${{ steps.version.outputs.version }}_android"
+          else
+            name="TasksNG_${GITHUB_SHA:0:7}_android"
+          fi
+          cp android/app/build/outputs/apk/release/app-release.apk "dist/$name.apk"
+          (cd dist && sha256sum *.apk > SHA256SUMS-android.txt)
+          ls -l dist
+
+      # The same key on every forge, or updates stop installing: never publish anything else.
+      - name: Check signing certificate
+        if: steps.version.outputs.release == 'true'
+        run: |
+          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$apksigner" verify --verbose --print-certs dist/*.apk | tee "$HOME/certs.txt"
+          actual=$(grep -m1 'certificate SHA-256 digest' "$HOME/certs.txt" | awk '{print $NF}')
+          expected=$(echo "$SIGNING_CERT_SHA256" | tr -d ':' | tr 'A-F' 'a-f')
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::APK signed with $actual, expected $expected"
+            exit 1
+          fi
+
+      # Gitea identifies as GHES, which upload-artifact@v4 refuses; v3 works with Gitea's artifact API.
+      - uses: https://github.com/actions/upload-artifact@v3
+        with:
+          name: TasksNG-android
+          path: dist/
+
+      - name: Publish Gitea release
+        if: steps.version.outputs.release == 'true'
+        env:
+          GITEA_URL: ${{ github.server_url }}
+          GITEA_REPO: ${{ github.repository }}
+          GITEA_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GITEA_SHA: ${{ github.sha }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          node .gitea/notes.mjs "$VERSION" > "$HOME/notes.md"
+          node .gitea/release.mjs "$TAG" "TasksNG $VERSION" "$HOME/notes.md" "dist/TasksNG_${VERSION}_android.apk" dist/SHA256SUMS-android.txt
