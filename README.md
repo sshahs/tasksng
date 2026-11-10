@@ -648,7 +648,9 @@ against the signing certificate's fingerprint), `windows.yml` (the NSIS installe
 and `latest.json`, cross-compiled on Linux with cargo-xwin), `docker.yml` (the image, pushed to
 Gitea's container registry and linked to the repository) and `nix.yml` (the flake). Its secrets are
 named `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`,
-`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; use the same keys as on
+`TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, and `REGISTRY_TOKEN` (an
+access token with package write access, which Gitea's automatic Actions token lacks, for pushing
+the image); use the same keys as on
 GitHub, or APKs and updates from one forge won't install over the other's.
 
 While Gitea pulls the repository from GitHub, tags come from GitHub: push a tag there and Gitea's
