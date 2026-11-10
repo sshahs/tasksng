@@ -25,10 +25,10 @@ use crate::state::{user_id, AppState, Connection, SyncStatus, User};
 pub const COOKIE: &str = "tasksng_session";
 
 /// An error for the UI: the message is shown as is.
-pub struct ApiError(StatusCode, String);
+pub struct ApiError(pub StatusCode, pub String);
 
 impl ApiError {
-    fn bad(msg: impl Into<String>) -> Self {
+    pub fn bad(msg: impl Into<String>) -> Self {
         ApiError(StatusCode::BAD_REQUEST, msg.into())
     }
 }
@@ -51,13 +51,13 @@ impl IntoResponse for ApiError {
     }
 }
 
-type ApiResult = Result<Response, ApiError>;
+pub type ApiResult = Result<Response, ApiError>;
 
-fn ok<T: Serialize>(value: T) -> ApiResult {
+pub fn ok<T: Serialize>(value: T) -> ApiResult {
     Ok(Json(value).into_response())
 }
 
-fn args<T: DeserializeOwned>(body: &Value) -> Result<T, ApiError> {
+pub fn args<T: DeserializeOwned>(body: &Value) -> Result<T, ApiError> {
     T::deserialize(body).map_err(|e| ApiError::bad(format!("Invalid request: {e}")))
 }
 
@@ -87,7 +87,7 @@ fn secure_request(state: &AppState, headers: &HeaderMap) -> bool {
     })
 }
 
-fn cookie(state: &AppState, headers: &HeaderMap, value: &str, max_age: i64) -> HeaderValue {
+pub fn cookie(state: &AppState, headers: &HeaderMap, value: &str, max_age: i64) -> HeaderValue {
     let secure = if secure_request(state, headers) { "; Secure" } else { "" };
     HeaderValue::from_str(&format!("{COOKIE}={value}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}{secure}"))
         .expect("cookie is ASCII")
@@ -165,6 +165,10 @@ fn schedule_push(user: &Arc<User>) {
         if !report.notices.is_empty() {
             user.emit("notices", &report.notices);
         }
+        if result.is_ok() {
+            // Paired phones sync right away instead of on their next round.
+            let _ = user.device_events.send("changed".into());
+        }
         emit_snapshot(&user);
         schedule_save(&user);
     });
@@ -179,7 +183,7 @@ fn after_local_change(user: &Arc<User>) {
     set_status(user, current.state, current.message);
 }
 
-async fn run_sync(user: &Arc<User>) -> Result<Vec<String>, Error> {
+pub async fn run_sync(user: &Arc<User>) -> Result<Vec<String>, Error> {
     let Some(conn) = user.connection() else {
         let msg = "Please sign in again".to_string();
         set_status(user, "auth-required", Some(msg.clone()));
@@ -200,13 +204,13 @@ async fn run_sync(user: &Arc<User>) -> Result<Vec<String>, Error> {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ConnectArgs {
+pub struct ConnectArgs {
     #[serde(default)]
-    server_url: String,
-    username: String,
-    password: String,
+    pub server_url: String,
+    pub username: String,
+    pub password: String,
     #[serde(default)]
-    accept_invalid_certs: bool,
+    pub accept_invalid_certs: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -272,6 +276,8 @@ fn server_info(state: &AppState) -> Value {
     json!({
         "version": env!("CARGO_PKG_VERSION"),
         "caldavUrl": state.config.caldav_url,
+        // Phones can be paired with this server (see pair.rs).
+        "pairing": true,
     })
 }
 
@@ -299,6 +305,8 @@ async fn dispatch(state: &Arc<AppState>, cmd: &str, headers: &HeaderMap, body: &
     match cmd {
         "server_info" => return ok(server_info(state)),
         "connect" => return connect(state, headers, args(&body["args"])?).await,
+        "login_start" => return crate::pair::login_start(state),
+        "login_poll" => return crate::pair::login_poll(state, headers, body).await,
         _ => {}
     }
     let Some(user) = current_user(state, headers) else {
@@ -314,6 +322,9 @@ async fn dispatch(state: &Arc<AppState>, cmd: &str, headers: &HeaderMap, body: &
         "get_snapshot" => ok(user.store().snapshot()),
         "get_status" => ok(user.status()),
         "sign_out" => sign_out(state, headers, &user).await,
+        "pair_start" => crate::pair::pair_start(state, &user),
+        "list_devices" => ok(state.pairing.devices_of(&user.id)),
+        "unlink_device" => crate::pair::unlink_device(state, &user, body),
         "sync_now" => {
             let (notices, error) = match run_sync(&user).await {
                 Ok(n) => (n, None),
@@ -483,7 +494,9 @@ async fn dispatch(state: &Arc<AppState>, cmd: &str, headers: &HeaderMap, body: &
     }
 }
 
-async fn connect(state: &Arc<AppState>, headers: &HeaderMap, a: ConnectArgs) -> ApiResult {
+/// Checks the account against the CalDAV server and opens (or creates) its
+/// state here. Answers the account and its id.
+pub async fn sign_in(state: &Arc<AppState>, a: &ConnectArgs) -> Result<Arc<User>, ApiError> {
     let username = a.username.trim().to_string();
     if username.is_empty() {
         return Err(ApiError::bad("Enter your username"));
@@ -527,24 +540,33 @@ async fn connect(state: &Arc<AppState>, headers: &HeaderMap, a: ConnectArgs) -> 
         accept_invalid_certs: a.accept_invalid_certs,
     });
     user.set_connection(Some(Connection { client, home }));
+    log::info!("account {id} signed in");
+    Ok(user)
+}
 
-    // A new session; a previous one in this browser (maybe another account) ends.
+/// Starts a browser session for `user` and answers its first snapshot with
+/// the session cookie. A previous session in this browser (maybe another
+/// account) ends.
+pub async fn start_session(state: &Arc<AppState>, headers: &HeaderMap, user: &Arc<User>) -> Response {
     let token = {
         let mut sessions = state.sessions();
         if let Some(old) = session_token(headers) {
             sessions.remove(&old);
         }
-        sessions.create(&id)
+        sessions.create(&user.id)
     };
-    log::info!("account {id} signed in");
-
-    let (notices, error) = match run_sync(&user).await {
+    let (notices, error) = match run_sync(user).await {
         Ok(n) => (n, None),
         Err(e) => (Vec::new(), Some(e.to_string())),
     };
     let mut response = Json(SyncOutcome { snapshot: user.store().snapshot(), notices, error }).into_response();
     response.headers_mut().insert(header::SET_COOKIE, cookie(state, headers, &token, 90 * 24 * 3600));
-    Ok(response)
+    response
+}
+
+async fn connect(state: &Arc<AppState>, headers: &HeaderMap, a: ConnectArgs) -> ApiResult {
+    let user = sign_in(state, &a).await?;
+    Ok(start_session(state, headers, &user).await)
 }
 
 async fn sign_out(state: &Arc<AppState>, headers: &HeaderMap, user: &Arc<User>) -> ApiResult {
@@ -555,6 +577,9 @@ async fn sign_out(state: &Arc<AppState>, headers: &HeaderMap, user: &Arc<User>) 
         user.forget_password();
     }
     state.sessions().remove_user(&user.id);
+    for id in state.pairing.remove_user(&user.id) {
+        let _ = user.device_events.send(format!("unlinked:{id}"));
+    }
     set_status(user, "signed-out", None);
     save_now(user).await;
     log::info!("account {} signed out", user.id);

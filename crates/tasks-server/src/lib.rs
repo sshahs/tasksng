@@ -4,6 +4,7 @@
 //! Configuration is read from environment variables (see `Config::from_env`).
 
 pub mod api;
+pub mod pair;
 pub mod state;
 
 use std::convert::Infallible;
@@ -109,6 +110,11 @@ pub fn app(state: Arc<AppState>) -> Router {
     let files = ServeDir::new(&state.config.static_dir).fallback(ServeFile::new(index));
     let api = Router::new()
         .route("/events", get(events))
+        .route("/pair/claim", post(pair::claim))
+        .route("/pair/approve", post(pair::approve))
+        .route("/device/poke", post(pair::poke))
+        .route("/device/unlink", post(pair::unlink))
+        .route("/device/events", get(pair::device_events))
         .route("/{cmd}", post(api::command))
         .layer(SetResponseHeaderLayer::overriding(header::CACHE_CONTROL, HeaderValue::from_static("no-store")));
     Router::new()

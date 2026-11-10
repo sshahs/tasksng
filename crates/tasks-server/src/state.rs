@@ -68,6 +68,9 @@ pub struct User {
     pub settings: Mutex<Settings>,
     pub alarms: Alarms,
     pub events: broadcast::Sender<Event>,
+    /// For paired phones: `changed` when a browser changed something, and
+    /// `unlinked:<device id>` when a phone was removed.
+    pub device_events: broadcast::Sender<String>,
 }
 
 impl User {
@@ -113,6 +116,7 @@ impl User {
             settings: Mutex::new(settings),
             alarms,
             events: broadcast::channel(64).0,
+            device_events: broadcast::channel(16).0,
         }
     }
 
@@ -152,6 +156,11 @@ impl User {
         write_private(&self.dir.join("credentials.json"), &serde_json::to_vec(&StoredPassword { password: password.into() })?)
     }
 
+    /// The account's CalDAV password, for a phone that is being paired.
+    pub fn password(&self) -> Option<String> {
+        load_password(&self.dir)
+    }
+
     pub fn forget_password(&self) {
         let _ = std::fs::remove_file(self.dir.join("credentials.json"));
     }
@@ -168,7 +177,7 @@ fn load_password(dir: &Path) -> Option<String> {
 }
 
 /// Writes a file only this user can read, created that way from the start.
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let mut open = std::fs::OpenOptions::new();
     open.write(true).create(true).truncate(true);
@@ -263,6 +272,7 @@ impl Sessions {
 pub struct AppState {
     pub config: Config,
     pub sessions: Mutex<Sessions>,
+    pub pairing: crate::pair::Pairing,
     users: Mutex<HashMap<String, Arc<User>>>,
 }
 
@@ -270,7 +280,8 @@ impl AppState {
     pub fn new(config: Config) -> std::io::Result<AppState> {
         std::fs::create_dir_all(config.data_dir.join("users"))?;
         let sessions = Sessions::open(config.data_dir.join("sessions.json"));
-        Ok(AppState { config, sessions: Mutex::new(sessions), users: Mutex::new(HashMap::new()) })
+        let pairing = crate::pair::Pairing::open(config.data_dir.join("devices.json"));
+        Ok(AppState { config, sessions: Mutex::new(sessions), pairing, users: Mutex::new(HashMap::new()) })
     }
 
     pub fn sessions(&self) -> MutexGuard<'_, Sessions> {
